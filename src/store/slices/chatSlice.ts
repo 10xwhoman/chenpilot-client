@@ -21,6 +21,7 @@ interface ChatState {
   isOnline: boolean;
   messageQueue: Array<{ id: string; query: string; timestamp: string }>;
   pendingMessages: Set<string>;
+  optimisticUpdates: Map<string, ChatMessage>;
 }
 
 const initialState: ChatState = {
@@ -41,10 +42,20 @@ const initialState: ChatState = {
   isOnline: typeof window !== "undefined" && navigator.onLine,
   messageQueue: [],
   pendingMessages: new Set(),
+  optimisticUpdates: new Map(),
 };
 
 // Async thunks
 // Removed server-side conversation thunks - now handled client-side
+
+// Helper function to sort messages by timestamp
+const sortMessagesByTimestamp = (messages: ChatMessage[]): ChatMessage[] => {
+  return [...messages].sort((a, b) => {
+    const aTime = new Date(a.timestamp).getTime();
+    const bTime = new Date(b.timestamp).getTime();
+    return aTime - bTime;
+  });
+};
 
 export const getOrCreateActiveConversation = createAsyncThunk(
   "chat/getOrCreateActiveConversation",
@@ -111,12 +122,15 @@ export const sendMessage = createAsyncThunk(
         };
       }
 
-      // Save user message locally (no server call needed)
+      // Generate server timestamp (should come from server in production)
+      const serverTimestamp = new Date().toISOString();
+
+      // Save user message with server timestamp
       const userMessage: ChatMessage = {
-        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: `msg_user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: "user",
         content: query,
-        timestamp: new Date().toISOString(),
+        timestamp: serverTimestamp,
       };
 
       // Call the API service to get actual response
@@ -147,12 +161,17 @@ export const sendMessage = createAsyncThunk(
         }
       }
 
+      // Generate server timestamp for agent response (slightly after user message)
+      const agentTimestamp = new Date(
+        new Date(serverTimestamp).getTime() + 1,
+      ).toISOString();
+
       // Create agent message with execution trace if available
       const agentMessage: ChatMessage = {
-        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: `msg_agent_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: "agent",
         content: content,
-        timestamp: new Date().toISOString(),
+        timestamp: agentTimestamp,
         metadata: {
           success: response.result.success,
           error: response.result.error,
@@ -182,6 +201,7 @@ const chatSlice = createSlice({
     },
     addMessage: (state, action: PayloadAction<ChatMessage>) => {
       state.messages.push(action.payload);
+      state.messages = sortMessagesByTimestamp(state.messages);
     },
     addUserMessage: (state, action: PayloadAction<string>) => {
       const userMessage: ChatMessage = {
@@ -209,7 +229,7 @@ const chatSlice = createSlice({
       state.messages = [];
     },
     setMessages: (state, action: PayloadAction<ChatMessage[]>) => {
-      state.messages = action.payload;
+      state.messages = sortMessagesByTimestamp(action.payload);
     },
     setConversations: (state, action: PayloadAction<Conversation[]>) => {
       state.conversations = action.payload;
@@ -235,6 +255,8 @@ const chatSlice = createSlice({
           ...state.messages[index],
           ...action.payload.updates,
         };
+        // Re-sort after update in case timestamp changed
+        state.messages = sortMessagesByTimestamp(state.messages);
       }
     },
     removeMessage: (state, action: PayloadAction<string>) => {
@@ -271,7 +293,9 @@ const chatSlice = createSlice({
     loadChatHistory: (state, action: PayloadAction<string>) => {
       const conversationId = action.payload;
       if (state.chatHistory[conversationId]) {
-        state.messages = state.chatHistory[conversationId];
+        state.messages = sortMessagesByTimestamp(
+          state.chatHistory[conversationId],
+        );
       } else {
         state.messages = [];
       }
@@ -476,6 +500,25 @@ const chatSlice = createSlice({
     removePendingMessage: (state, action: PayloadAction<string>) => {
       state.pendingMessages.delete(action.payload);
     },
+    storeOptimisticUpdate: (state, action: PayloadAction<ChatMessage>) => {
+      state.optimisticUpdates.set(action.payload.id, action.payload);
+    },
+    removeOptimisticUpdate: (state, action: PayloadAction<string>) => {
+      state.optimisticUpdates.delete(action.payload);
+    },
+    resolveOptimisticUpdate: (
+      state,
+      action: PayloadAction<{ clientId: string; serverMessage: ChatMessage }>,
+    ) => {
+      const { clientId, serverMessage } = action.payload;
+      // Remove optimistic update and add resolved message
+      state.optimisticUpdates.delete(clientId);
+      // Remove the old optimistic message if it exists
+      state.messages = state.messages.filter((msg) => msg.id !== clientId);
+      // Add the server version and resort
+      state.messages.push(serverMessage);
+      state.messages = sortMessagesByTimestamp(state.messages);
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -548,6 +591,9 @@ const chatSlice = createSlice({
         if (action.payload.agentMessage) {
           state.messages.push(action.payload.agentMessage);
         }
+
+        // Sort messages by server timestamp to handle race conditions
+        state.messages = sortMessagesByTimestamp(state.messages);
 
         // Save chat history after each message
         if (state.currentConversation) {
@@ -632,5 +678,8 @@ export const {
   loadMessageQueue,
   addPendingMessage,
   removePendingMessage,
+  storeOptimisticUpdate,
+  removeOptimisticUpdate,
+  resolveOptimisticUpdate,
 } = chatSlice.actions;
 export default chatSlice.reducer;
