@@ -191,6 +191,7 @@ export interface ChatMessage {
   type: "user" | "agent" | "system";
   content: string;
   timestamp: string;
+  serverTimestamp?: number | string;
   metadata?: {
     transactionHash?: string;
     amount?: string;
@@ -204,6 +205,10 @@ export interface ChatMessage {
     requiresConfirmation?: boolean;
     executionTrace?: ExecutionTrace;
     rawData?: any;
+    serverTimestamp?: number | string;
+    clientTimestamp?: number | string;
+    optimisticId?: string;
+    tempId?: string;
   };
 }
 

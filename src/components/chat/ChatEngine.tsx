@@ -178,7 +178,7 @@ export const ChatEngine: React.FC = () => {
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputValue.trim() || isChatLoading || isTyping) return;
+    if (!inputValue.trim()) return;
 
     const message = inputValue.trim();
     setInputValue('');
@@ -255,7 +255,7 @@ export const ChatEngine: React.FC = () => {
             }
           }}
           placeholder={isRecording ? "Listening..." : "Ask ChenPilot..."}
-          disabled={isChatLoading || isTyping}
+          disabled={isRecording}
           className="w-full bg-transparent border-none text-white placeholder:text-gray-500 focus:outline-none text-lg mb-4"
         />
         
@@ -294,7 +294,6 @@ export const ChatEngine: React.FC = () => {
           <button
             type="button"
             onClick={() => inputValue.trim() ? handleSendMessage() : toggleVoiceRecording()}
-            disabled={isChatLoading || isTyping}
             className={`p-3 rounded-lg transition-colors ${
               isRecording 
                 ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' 
