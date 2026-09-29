@@ -270,11 +270,9 @@ const chatSlice = createSlice({
     },
     loadChatHistory: (state, action: PayloadAction<string>) => {
       const conversationId = action.payload;
-      if (state.chatHistory[conversationId]) {
-        state.messages = state.chatHistory[conversationId];
-      } else {
-        state.messages = [];
-      }
+      const conversation = state.conversations.find((item) => item.id === conversationId);
+      state.currentConversation = conversation ?? state.currentConversation;
+      state.messages = state.chatHistory[conversationId] ?? conversation?.messages ?? [];
     },
     saveChatHistory: (state) => {
       if (state.currentConversation && state.messages.length > 0) {
@@ -310,24 +308,39 @@ const chatSlice = createSlice({
       }
     },
     saveConversationLocally: (state, action: PayloadAction<Conversation>) => {
-      const conversation = action.payload;
-      state.conversations.unshift(conversation);
+      const conversation = {
+        ...action.payload,
+        messages: [...state.messages],
+        messageCount: state.messages.length,
+      };
+      state.chatHistory[conversation.id] = [...state.messages];
+      const existingIndex = state.conversations.findIndex((item) => item.id === conversation.id);
+      if (existingIndex >= 0) {
+        state.conversations[existingIndex] = conversation;
+      } else {
+        state.conversations.unshift(conversation);
+      }
 
       // Save to localStorage
       if (typeof window !== "undefined") {
         const conversations = JSON.parse(
           localStorage.getItem("conversations") || "[]",
         );
-        conversations.unshift(conversation);
+        const existingIndex = conversations.findIndex((item: Conversation) => item.id === conversation.id);
+        if (existingIndex >= 0) conversations[existingIndex] = conversation;
+        else conversations.unshift(conversation);
         localStorage.setItem("conversations", JSON.stringify(conversations));
+        localStorage.setItem("chat_history", JSON.stringify(state.chatHistory));
       }
     },
     loadConversationsLocally: (state) => {
       if (typeof window !== "undefined") {
-        const conversations = JSON.parse(
-          localStorage.getItem("conversations") || "[]",
-        );
-        state.conversations = conversations;
+        try {
+          const conversations = JSON.parse(localStorage.getItem("conversations") || "[]");
+          state.conversations = Array.isArray(conversations) ? conversations : [];
+        } catch {
+          state.conversations = [];
+        }
       }
     },
     deleteConversationLocally: (state, action: PayloadAction<string>) => {

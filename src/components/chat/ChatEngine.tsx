@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { ChatMessage } from "@/types";
+import { usePathname, useRouter } from "next/navigation";
 
 // Speech Recognition types
 interface SpeechRecognition extends EventTarget {
@@ -82,6 +83,8 @@ declare global {
 }
 
 export const ChatEngine: React.FC = () => {
+  const router = useRouter();
+  const pathname = usePathname();
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
   const {
@@ -114,6 +117,12 @@ export const ChatEngine: React.FC = () => {
       dispatch(saveConversationLocally(currentConversation));
     }
   }, [dispatch, currentConversation, messages.length]);
+
+  useEffect(() => {
+    if (currentConversation?.id && pathname === "/chat") {
+      router.replace(`/chat/${encodeURIComponent(currentConversation.id)}`, { scroll: false });
+    }
+  }, [currentConversation?.id, pathname, router]);
 
   useEffect(() => {
     return () => {
