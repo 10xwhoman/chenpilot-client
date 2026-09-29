@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import Image from 'next/image';
+import RetryStatusBanner from '@/components/ui/RetryStatusBanner';
 
 interface ChatLayoutProps {
   children: React.ReactNode;
@@ -348,6 +349,9 @@ export function ChatLayout({ children }: ChatLayoutProps) {
           <div className="w-10" /> {/* Spacer for centering */}
         </div>
         
+        {/* Retry status banner — shown automatically during backoff delays */}
+        <RetryStatusBanner />
+
         {/* Page content */}
         <main className="flex-1 overflow-hidden">
           {children}

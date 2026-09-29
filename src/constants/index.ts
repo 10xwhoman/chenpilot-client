@@ -259,3 +259,37 @@ export const Z_INDEX = {
   TOOLTIP: 1070,
   TOAST: 1080,
 } as const;
+
+// Voice Message
+export const VOICE_MESSAGE = {
+  /** Maximum audio blob size accepted before sending (5 MB) */
+  MAX_SIZE_BYTES: 5 * 1024 * 1024,
+  /** Maximum recording duration in seconds (2 minutes) */
+  MAX_DURATION_SECONDS: 120,
+  /** Preferred MIME types in priority order */
+  PREFERRED_MIME_TYPES: [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/ogg',
+    'audio/mp4',
+  ],
+  /** Storage limit warning threshold: warn if voice messages exceed this in localStorage (1 MB) */
+  STORAGE_WARN_BYTES: 1 * 1024 * 1024,
+} as const;
+
+// Retry / backoff configuration
+export const RETRY_CONFIG = {
+  /** Maximum number of retry attempts before giving up */
+  MAX_ATTEMPTS: 3,
+  /** Base delay in ms for the first retry (doubles each attempt) */
+  BASE_DELAY_MS: 500,
+  /** Absolute cap on any single backoff delay (ms) */
+  MAX_DELAY_MS: 10_000,
+  /** Maximum random jitter added to each delay (ms) */
+  JITTER_MS: 300,
+  /** HTTP status codes that are safe to retry */
+  RETRYABLE_STATUS_CODES: [408, 429, 500, 502, 503, 504] as const,
+  /** HTTP methods treated as idempotent and therefore safe to retry */
+  IDEMPOTENT_METHODS: ['get', 'head', 'options', 'put', 'delete'] as const,
+} as const;

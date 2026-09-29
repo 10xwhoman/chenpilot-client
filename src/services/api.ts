@@ -26,12 +26,34 @@ import {
 } from '@/types';
 import agentService from './agentService';
 import { tokenRefreshService } from './tokenRefreshService';
+import {
+  isRetryableError,
+  computeBackoffMs,
+  sleep,
+  incrementRetryCount,
+  retryLabel,
+} from '@/utils/retryUtils';
+
+// ─── Lazy store reference ─────────────────────────────────────────────────────
+// We use a lazy injection pattern instead of a direct import to avoid the
+// circular dependency:  store → authSlice → api → store.
+// Call apiService.setStore(store) once in your store initialisation.
+
+type MinimalStore = {
+  dispatch: (action: { type: string; payload?: unknown }) => void;
+};
+
+let _store: MinimalStore | null = null;
 
 class ApiService {
   private api: AxiosInstance;
   private token: string | null = null;
 
   constructor() {
+    // ── Fix: load persisted token immediately so the first request after a
+    // page refresh is already authenticated without waiting for Redux hydration.
+    this.loadTokenFromStorage();
+
     this.api = axios.create({
       baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:2333',
       timeout: 30000,
@@ -40,7 +62,7 @@ class ApiService {
       },
     });
 
-    // Request interceptor to add auth token
+    // ── Interceptor 1: attach bearer token to every outgoing request ─────────
     this.api.interceptors.request.use(
       (config) => {
         if (this.token) {
@@ -48,20 +70,59 @@ class ApiService {
         }
         return config;
       },
-      (error) => {
-        return Promise.reject(error);
-      }
+      (error) => Promise.reject(error),
     );
 
-    // Response interceptor for automatic token refresh
+    // ── Interceptor 2: transient-error retry with exponential backoff ─────────
+    // Registered before the auth interceptor so 401s still reach the
+    // token-refresh logic unmodified. Non-retryable errors pass straight
+    // through to interceptor 3.
     this.api.interceptors.response.use(
       (response) => response,
       async (error) => {
         const originalRequest = error.config;
 
-        // If error is not 401 or original request already tried refresh, reject
+        if (!isRetryableError(error)) {
+          return Promise.reject(error);
+        }
+
+        const attempt = incrementRetryCount(originalRequest);
+        const delayMs = computeBackoffMs(attempt - 1, error);
+        const label   = retryLabel(error);
+
+        // Notify the UI so a status banner can be shown.
+        if (_store) {
+          _store.dispatch({
+            type: 'ui/setRetryStatus',
+            payload: {
+              label,
+              attempt,
+              maxAttempts: 3, // RETRY_CONFIG.MAX_ATTEMPTS — kept inline to avoid
+              nextRetryAt: Date.now() + delayMs, // circular dep issues in tests
+            },
+          });
+        }
+
+        await sleep(delayMs);
+
+        // Clear the status right before the re-attempt so the banner
+        // disappears once the request is back in-flight.
+        if (_store) {
+          _store.dispatch({ type: 'ui/clearRetryStatus' });
+        }
+
+        return this.api(originalRequest);
+      },
+    );
+
+    // ── Interceptor 3: queued token refresh on 401 ────────────────────────────
+    this.api.interceptors.response.use(
+      (response) => response,
+      async (error) => {
+        const originalRequest = error.config;
+
+        // Non-401 errors, or a request that already tried refresh, reject.
         if (error.response?.status !== 401 || originalRequest._retry) {
-          // Handle 401 by clearing token and redirecting to login
           if (error.response?.status === 401) {
             this.clearToken();
             if (typeof window !== 'undefined') {
@@ -71,32 +132,47 @@ class ApiService {
           return Promise.reject(error);
         }
 
-        // Mark that we're retrying
+        // Mark so this particular request only retries once.
         originalRequest._retry = true;
 
         try {
-          // Attempt to refresh the token
-          const response = await tokenRefreshService.refreshToken(this.api.defaults.baseURL as string);
-          const newToken = response.token;
-          
-          // Update the token in the service and original request
+          // tokenRefreshService serialises concurrent refresh calls:
+          // the first 401 does the real HTTP POST; every subsequent concurrent
+          // 401 queues here and waits. All resolve together with the new token.
+          const { token: newToken } = await tokenRefreshService.refreshToken(
+            this.api.defaults.baseURL as string,
+          );
+
+          // Keep ApiService, localStorage, AND Redux in sync.
           this.setToken(newToken);
           originalRequest.headers.Authorization = `Bearer ${newToken}`;
-          
-          // Retry the original request
+
+          if (_store) {
+            _store.dispatch({ type: 'auth/setToken', payload: newToken });
+          }
+
           return this.api(originalRequest);
         } catch (refreshError) {
-          // Refresh failed, clear token and redirect to login
+          // Refresh failed (e.g. refresh token itself expired) → log out.
           this.clearToken();
-          
+          if (_store) {
+            _store.dispatch({ type: 'auth/clearAuth' });
+          }
           if (typeof window !== 'undefined') {
             window.location.href = '/auth/login';
           }
-          
           return Promise.reject(refreshError);
         }
-      }
+      },
     );
+  }
+
+  /**
+   * Inject the Redux store reference.  Call this once after the store is
+   * created (e.g. in src/store/index.ts) to avoid circular imports.
+   */
+  setStore(store: MinimalStore): void {
+    _store = store;
   }
 
   setToken(token: string) {
@@ -218,18 +294,19 @@ class ApiService {
   }
 
   async refreshToken(): Promise<{ token: string }> {
-    // Use direct axios call to avoid interceptor recursion
+    // Use a bare axios call (not this.api) to avoid triggering the response
+    // interceptor recursively on a 401 from the refresh endpoint itself.
     const response = await axios.post<{ token: string }>(
       `${this.api.defaults.baseURL}/auth/refresh`,
       {},
       {
-        headers: {
-          'Content-Type': 'application/json',
-          // Don't send Authorization header for refresh to avoid circular dependency
-        },
-      }
+        headers: { 'Content-Type': 'application/json' },
+        // ── Fix: forward cookies so the server can read the httpOnly
+        // refresh-token cookie it set at login time.
+        withCredentials: true,
+      },
     );
-    
+
     if (response.data?.token) {
       this.setToken(response.data.token);
     }

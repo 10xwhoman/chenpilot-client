@@ -2,25 +2,41 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '@/store';
-import { sendMessage, clearMessages, updateMessage, saveConversationLocally } from '@/store/slices/chatSlice';
+import {
+  sendMessage,
+  sendVoiceMessage,
+  updateMessage,
+  saveConversationLocally,
+  openThread,
+  closeThread,
+  addReply,
+} from '@/store/slices/chatSlice';
 import AgentMessage from '@/components/chat/AgentMessage';
 import UserMessage from '@/components/chat/UserMessage';
-import { 
-  Send, 
-  Mic, 
-  Square, 
-  Zap, 
-  DollarSign, 
-  Bitcoin, 
-  Building2, 
+import ThreadPanel from '@/components/chat/ThreadPanel';
+import VoiceMessagePlayer from '@/components/chat/VoiceMessagePlayer';
+import { useVoiceRecorder } from '@/hooks/useVoiceRecorder';
+import { useSocketEvent } from '@/hooks/useSocket';
+import { ChatMessage } from '@/types';
+import { VOICE_MESSAGE } from '@/constants';
+import {
+  Send,
+  Mic,
+  Square,
+  Zap,
+  DollarSign,
+  Bitcoin,
+  Building2,
   Sun,
   CheckCircle,
-  Clock,
-  Copy
+  X,
+  SendHorizonal,
 } from 'lucide-react';
+import { cn } from '@/utils/cn';
 import toast from 'react-hot-toast';
 
-// Speech Recognition types
+// ─── Speech Recognition ambient types (used by the old transcription path) ────
+
 interface SpeechRecognition extends EventTarget {
   continuous: boolean;
   interimResults: boolean;
@@ -33,35 +49,29 @@ interface SpeechRecognition extends EventTarget {
   onend: () => void;
   onstart: () => void;
 }
-
 interface SpeechRecognitionEvent extends Event {
   resultIndex: number;
   results: SpeechRecognitionResultList;
 }
-
 interface SpeechRecognitionErrorEvent extends Event {
   error: string;
   message: string;
 }
-
 interface SpeechRecognitionResultList {
   length: number;
   item(index: number): SpeechRecognitionResult;
   [index: number]: SpeechRecognitionResult;
 }
-
 interface SpeechRecognitionResult {
   length: number;
   item(index: number): SpeechRecognitionAlternative;
   [index: number]: SpeechRecognitionAlternative;
   isFinal: boolean;
 }
-
 interface SpeechRecognitionAlternative {
   transcript: string;
   confidence: number;
 }
-
 declare global {
   interface Window {
     SpeechRecognition: new () => SpeechRecognition;
@@ -69,25 +79,80 @@ declare global {
   }
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatSeconds(secs: number): string {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export const ChatEngine: React.FC = () => {
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
-  const { messages, isLoading: isChatLoading, isTyping, currentConversation } = useAppSelector((state) => state.chat);
+  const {
+    messages,
+    isLoading: isChatLoading,
+    isTyping,
+    currentConversation,
+    activeThread,
+  } = useAppSelector((state) => state.chat);
+
+  // ── Text input state ──────────────────────────────────────────────────────
   const [inputValue, setInputValue] = useState('');
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
   const [showTools, setShowTools] = useState(false);
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
-  const [speechResult, setSpeechResult] = useState('');
-  const [isListening, setIsListening] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ── Legacy speech-to-text (transcription → text input) ───────────────────
+  // Kept for the Mic button when MediaRecorder is NOT supported
+  const [isLegacyRecording, setIsLegacyRecording] = useState(false);
+  const [legacyRecordingTime, setLegacyRecordingTime] = useState(0);
+  const legacyTimerRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
+  // ── Voice message recorder (MediaRecorder) ────────────────────────────────
+  const {
+    status: voiceStatus,
+    elapsedSeconds,
+    liveTranscript,
+    recording,
+    isSupported: isVoiceSupported,
+    startRecording,
+    stopRecording,
+    cancelRecording,
+    reset: resetRecorder,
+  } = useVoiceRecorder();
+
+  const isVoiceRecording = voiceStatus === 'recording';
+  const isVoicePreview  = voiceStatus === 'stopped';
+
+  // ── Thread handlers ───────────────────────────────────────────────────────
+  const handleOpenThread = (messageId: string) => {
+    if (activeThread?.rootMessageId === messageId) {
+      dispatch(closeThread());
+    } else {
+      dispatch(openThread(messageId));
+    }
+  };
+
+  const handleCloseThread = () => dispatch(closeThread());
+
+  // Listen for thread replies from other participants
+  useSocketEvent('thread:new_reply', (data: unknown) => {
+    const payload = data as { threadId: string; message: ChatMessage; userId: string };
+    if (payload.userId === user?.id) return;
+    dispatch(addReply(payload.message));
+    toast(`New reply in thread`, { icon: '💬' });
+  });
+
+  // ── Effects ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, isTyping]);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isTyping, voiceStatus]);
 
   useEffect(() => {
     if (currentConversation && messages.length > 0) {
@@ -95,102 +160,136 @@ export const ChatEngine: React.FC = () => {
     }
   }, [dispatch, currentConversation, messages.length]);
 
+  // Cleanup legacy recorder on unmount
   useEffect(() => {
     return () => {
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current);
-      }
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
+      if (legacyTimerRef.current) clearInterval(legacyTimerRef.current);
+      try { recognitionRef.current?.stop(); } catch { /* ignore */ }
     };
   }, []);
 
-  // Initialize speech recognition
+  // Initialize legacy SpeechRecognition (used only when MediaRecorder unavailable)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        recognitionRef.current = new SpeechRecognition();
-        recognitionRef.current.continuous = false;
-        recognitionRef.current.interimResults = true;
-        recognitionRef.current.lang = 'en-US';
+    if (typeof window === 'undefined') return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
 
-        recognitionRef.current.onstart = () => {
-          setIsListening(true);
-        };
+    const recognition = new SR();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
 
-        recognitionRef.current.onresult = (event) => {
-          let finalTranscript = '';
-          let interimTranscript = '';
-
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-              finalTranscript += transcript;
-            } else {
-              interimTranscript += transcript;
-            }
-          }
-
-          if (finalTranscript) {
-            setSpeechResult(finalTranscript);
-            setInputValue(finalTranscript);
-            if (recognitionRef.current) {
-              recognitionRef.current.stop();
-            }
-          } else {
-            setSpeechResult(interimTranscript);
-          }
-        };
-
-        recognitionRef.current.onerror = (event) => {
-          console.error('Speech recognition error:', event.error);
-          setIsListening(false);
-          setIsRecording(false);
-          
-          let errorMessage = 'Speech recognition failed. ';
-          switch (event.error) {
-            case 'no-speech': errorMessage += 'No speech was detected.'; break;
-            case 'audio-capture': errorMessage += 'No microphone was found.'; break;
-            case 'not-allowed': errorMessage += 'Microphone access denied.'; break;
-            case 'network': errorMessage += 'Network error occurred.'; break;
-            default: errorMessage += 'Please try again.';
-          }
-          toast.error(errorMessage);
-        };
-
-        recognitionRef.current.onend = () => {
-          setIsListening(false);
-          setIsRecording(false);
-          if (recordingIntervalRef.current) {
-            clearInterval(recordingIntervalRef.current);
-            setRecordingTime(0);
-          }
-        };
+    recognition.onstart = () => {};
+    recognition.onresult = (event) => {
+      let finalTranscript = '';
+      let interimTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalTranscript += t;
+        else interimTranscript += t;
       }
-    }
+      if (finalTranscript) {
+        setInputValue(finalTranscript);
+        recognition.stop();
+      }
+    };
+    recognition.onerror = (event) => {
+      setIsLegacyRecording(false);
+      if (legacyTimerRef.current) clearInterval(legacyTimerRef.current);
+      const msgs: Record<string, string> = {
+        'no-speech': 'No speech detected.',
+        'audio-capture': 'No microphone found.',
+        'not-allowed': 'Microphone access denied.',
+        'network': 'Network error.',
+      };
+      toast.error('Speech recognition failed. ' + (msgs[event.error] ?? 'Please try again.'));
+    };
+    recognition.onend = () => {
+      setIsLegacyRecording(false);
+      if (legacyTimerRef.current) {
+        clearInterval(legacyTimerRef.current);
+        setLegacyRecordingTime(0);
+      }
+    };
+
+    recognitionRef.current = recognition;
   }, []);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  // ── Handlers ──────────────────────────────────────────────────────────────
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!inputValue.trim() || isChatLoading || isTyping) return;
-
     const message = inputValue.trim();
     setInputValue('');
-
     try {
-      const queryWithTool = selectedTool 
-        ? `[Using ${selectedTool} tool] ${message}`
-        : message;
-      
-      await dispatch(sendMessage(queryWithTool)).unwrap();
+      const query = selectedTool ? `[Using ${selectedTool} tool] ${message}` : message;
+      await dispatch(sendMessage(query)).unwrap();
     } catch (error: any) {
       toast.error(error || 'Failed to send message');
+    }
+  };
+
+  // Start/stop the voice recorder (MediaRecorder path)
+  const handleVoiceMicClick = async () => {
+    if (isVoiceRecording) {
+      stopRecording();
+      return;
+    }
+    if (isVoicePreview) {
+      resetRecorder();
+      return;
+    }
+    try {
+      await startRecording();
+    } catch (err: any) {
+      const msg =
+        err?.name === 'NotAllowedError'
+          ? 'Microphone access denied. Please allow microphone access and try again.'
+          : err?.name === 'NotFoundError'
+          ? 'No microphone found. Please connect a microphone and try again.'
+          : 'Could not start recording. Please try again.';
+      toast.error(msg);
+    }
+  };
+
+  // Send the previewed voice message
+  const handleSendVoiceMessage = async () => {
+    if (!recording) return;
+    try {
+      await dispatch(
+        sendVoiceMessage({
+          audioUrl: recording.audioUrl,
+          duration: recording.duration,
+          mimeType: recording.mimeType,
+          transcript: recording.transcript,
+          sizeBytes: recording.sizeBytes,
+        }),
+      ).unwrap();
+      resetRecorder();
+    } catch (error: any) {
+      toast.error(error || 'Failed to send voice message');
+    }
+  };
+
+  // Legacy: toggle speech-to-text (fallback when MediaRecorder not supported)
+  const toggleLegacyRecording = () => {
+    if (isLegacyRecording) {
+      recognitionRef.current?.stop();
+      setIsLegacyRecording(false);
+      if (legacyTimerRef.current) clearInterval(legacyTimerRef.current);
+    } else {
+      if (!recognitionRef.current) {
+        toast.error('Voice input is not supported in this browser');
+        return;
+      }
+      setIsLegacyRecording(true);
+      setLegacyRecordingTime(0);
+      legacyTimerRef.current = setInterval(
+        () => setLegacyRecordingTime((t) => t + 1),
+        1000,
+      );
+      recognitionRef.current.start();
     }
   };
 
@@ -204,82 +303,134 @@ export const ChatEngine: React.FC = () => {
     toast.success('Message updated');
   };
 
-  const toggleVoiceRecording = () => {
-    if (isRecording) {
-      recognitionRef.current?.stop();
-      setIsRecording(false);
-      if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
-    } else {
-      if (!recognitionRef.current) {
-        toast.error('Speech recognition is not supported in this browser');
-        return;
-      }
-      setSpeechResult('');
-      setIsRecording(true);
-      setRecordingTime(0);
-      recordingIntervalRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
-      recognitionRef.current.start();
-    }
-  };
-
-  const formatRecordingTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
   const agentTools = [
-    { name: 'Soroswap', description: 'Stellar DEX for token swaps', icon: Zap },
-    { name: 'Blend', description: 'Lending and borrowing protocol', icon: DollarSign },
-    { name: 'Aquarius', description: 'Liquidity pool management', icon: Bitcoin },
-    { name: 'Phoenix', description: 'Advanced DeFi operations', icon: Building2 }
+    { name: 'Soroswap',  description: 'Stellar DEX for token swaps',      icon: Zap       },
+    { name: 'Blend',     description: 'Lending and borrowing protocol',    icon: DollarSign },
+    { name: 'Aquarius',  description: 'Liquidity pool management',         icon: Bitcoin    },
+    { name: 'Phoenix',   description: 'Advanced DeFi operations',          icon: Building2  },
   ];
 
-  const handleToolSelect = (toolName: string) => {
-    setSelectedTool(selectedTool === toolName ? null : toolName);
+  // ── Recording overlay (shown inside the input box while recording) ─────────
+  const renderRecordingOverlay = () => {
+    if (!isVoiceRecording) return null;
+    const pct = Math.min(elapsedSeconds / VOICE_MESSAGE.MAX_DURATION_SECONDS, 1);
+    return (
+      <div className="flex items-center gap-3 mb-4">
+        {/* Animated pulse dot */}
+        <span className="relative flex h-3 w-3 shrink-0">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
+        </span>
+
+        {/* Live transcript preview */}
+        <span className="flex-1 text-sm text-gray-300 truncate min-w-0">
+          {liveTranscript || (
+            <span className="text-gray-500 italic">Listening…</span>
+          )}
+        </span>
+
+        {/* Elapsed / max */}
+        <span className="text-xs text-red-400 font-mono shrink-0">
+          {formatSeconds(elapsedSeconds)} / {formatSeconds(VOICE_MESSAGE.MAX_DURATION_SECONDS)}
+        </span>
+
+        {/* Progress bar */}
+        <div className="w-20 h-1 rounded-full bg-gray-700 shrink-0 overflow-hidden">
+          <div
+            className="h-full bg-red-400 rounded-full transition-all duration-1000"
+            style={{ width: `${pct * 100}%` }}
+          />
+        </div>
+      </div>
+    );
   };
 
+  // ── Pre-send preview strip ─────────────────────────────────────────────────
+  const renderVoicePreview = () => {
+    if (!isVoicePreview || !recording) return null;
+    return (
+      <div className="mb-4 flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <VoiceMessagePlayer
+            audioUrl={recording.audioUrl}
+            duration={recording.duration}
+            transcript={recording.transcript}
+            variant="user"
+          />
+        </div>
+        {/* Cancel preview */}
+        <button
+          onClick={resetRecorder}
+          className="shrink-0 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          title="Discard voice message"
+          aria-label="Discard voice message"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    );
+  };
+
+  // ── Input area ────────────────────────────────────────────────────────────
   const renderInput = (isSticky: boolean = false) => (
     <div className={`w-full ${isSticky ? 'max-w-4xl mx-auto px-4 py-6' : 'max-w-3xl mb-8'}`}>
       <div className="relative bg-[#1A1A2E] rounded-2xl p-6 border border-gray-800/50 shadow-xl">
-        <input
-          ref={inputRef}
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              handleSendMessage();
-            }
-          }}
-          placeholder={isRecording ? "Listening..." : "Ask ChenPilot..."}
-          disabled={isChatLoading || isTyping}
-          className="w-full bg-transparent border-none text-white placeholder:text-gray-500 focus:outline-none text-lg mb-4"
-        />
-        
-        {isRecording && (
+
+        {/* ── Voice recording overlay ── */}
+        {renderRecordingOverlay()}
+
+        {/* ── Voice preview strip ── */}
+        {renderVoicePreview()}
+
+        {/* ── Text input (hidden while voice recording/preview) ── */}
+        {!isVoiceRecording && !isVoicePreview && (
+          <input
+            ref={inputRef}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage();
+              }
+            }}
+            placeholder={isLegacyRecording ? 'Listening…' : 'Ask ChenPilot…'}
+            disabled={isChatLoading || isTyping}
+            className="w-full bg-transparent border-none text-white placeholder:text-gray-500 focus:outline-none text-lg mb-4"
+          />
+        )}
+
+        {/* ── Legacy recording time badge ── */}
+        {isLegacyRecording && (
           <div className="absolute right-6 top-6 flex items-center space-x-2 text-red-400">
             <div className="flex space-x-1">
-              <div className="w-1 h-4 bg-red-400 rounded-full animate-pulse"></div>
-              <div className="w-1 h-4 bg-red-400 rounded-full animate-pulse" style={{ animationDelay: '0.1s' }}></div>
-              <div className="w-1 h-4 bg-red-400 rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></div>
+              {[0, 0.1, 0.2].map((delay) => (
+                <div
+                  key={delay}
+                  className="w-1 h-4 bg-red-400 rounded-full animate-pulse"
+                  style={{ animationDelay: `${delay}s` }}
+                />
+              ))}
             </div>
-            <span className="text-xs font-mono">{formatRecordingTime(recordingTime)}</span>
+            <span className="text-xs font-mono">{formatSeconds(legacyRecordingTime)}</span>
           </div>
         )}
-        
+
+        {/* ── Bottom toolbar ── */}
         <div className="flex items-center justify-between">
+          {/* Tools picker */}
           <div className="flex items-center space-x-3">
             <button
               type="button"
               onClick={() => setShowTools(!showTools)}
-              className={`flex items-center space-x-2 px-4 py-2 text-sm rounded-lg transition-colors ${
-                selectedTool 
-                  ? 'text-purple-300 bg-purple-600/20 border border-purple-500/30' 
-                  : 'text-gray-400 hover:bg-gray-800/50 hover:text-white'
-              }`}
+              disabled={isVoiceRecording || isVoicePreview}
+              className={cn(
+                'flex items-center space-x-2 px-4 py-2 text-sm rounded-lg transition-colors',
+                selectedTool
+                  ? 'text-purple-300 bg-purple-600/20 border border-purple-500/30'
+                  : 'text-gray-400 hover:bg-gray-800/50 hover:text-white',
+                (isVoiceRecording || isVoicePreview) && 'opacity-40 pointer-events-none',
+              )}
             >
               <span className="text-lg">+</span>
               <span>Tools</span>
@@ -290,29 +441,86 @@ export const ChatEngine: React.FC = () => {
               )}
             </button>
           </div>
-          
-          <button
-            type="button"
-            onClick={() => inputValue.trim() ? handleSendMessage() : toggleVoiceRecording()}
-            disabled={isChatLoading || isTyping}
-            className={`p-3 rounded-lg transition-colors ${
-              isRecording 
-                ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' 
-                : inputValue.trim() 
-                ? 'bg-purple-600 text-white hover:bg-purple-700' 
-                : 'text-gray-400 hover:bg-gray-800/50 hover:text-white'
-            }`}
-          >
-            {isRecording ? (
-              <Square className="h-6 w-6" />
-            ) : inputValue.trim() ? (
-              <Send className="h-6 w-6" />
-            ) : (
-              <Mic className="h-6 w-6" />
+
+          {/* Right-side action buttons */}
+          <div className="flex items-center gap-2">
+            {/* Cancel recording button (while recording) */}
+            {isVoiceRecording && (
+              <button
+                type="button"
+                onClick={cancelRecording}
+                className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+                title="Cancel recording"
+                aria-label="Cancel recording"
+              >
+                <X className="h-5 w-5" />
+              </button>
             )}
-          </button>
+
+            {/* Send voice message button (preview state) */}
+            {isVoicePreview && (
+              <button
+                type="button"
+                onClick={handleSendVoiceMessage}
+                disabled={isChatLoading}
+                className="p-3 rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition-colors"
+                title="Send voice message"
+                aria-label="Send voice message"
+              >
+                <SendHorizonal className="h-6 w-6" />
+              </button>
+            )}
+
+            {/* Main mic / stop / send button */}
+            {!isVoicePreview && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (inputValue.trim() && !isVoiceRecording) {
+                    handleSendMessage();
+                  } else if (isVoiceSupported) {
+                    handleVoiceMicClick();
+                  } else {
+                    toggleLegacyRecording();
+                  }
+                }}
+                disabled={isChatLoading || isTyping}
+                className={cn(
+                  'p-3 rounded-lg transition-colors',
+                  isVoiceRecording || isLegacyRecording
+                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                    : inputValue.trim()
+                    ? 'bg-purple-600 text-white hover:bg-purple-700'
+                    : 'text-gray-400 hover:bg-gray-800/50 hover:text-white',
+                )}
+                title={
+                  isVoiceRecording || isLegacyRecording
+                    ? 'Stop recording'
+                    : inputValue.trim()
+                    ? 'Send message'
+                    : 'Record voice message'
+                }
+                aria-label={
+                  isVoiceRecording || isLegacyRecording
+                    ? 'Stop recording'
+                    : inputValue.trim()
+                    ? 'Send message'
+                    : 'Record voice message'
+                }
+              >
+                {isVoiceRecording || isLegacyRecording ? (
+                  <Square className="h-6 w-6" />
+                ) : inputValue.trim() ? (
+                  <Send className="h-6 w-6" />
+                ) : (
+                  <Mic className="h-6 w-6" />
+                )}
+              </button>
+            )}
+          </div>
         </div>
-        
+
+        {/* ── Tools dropdown ── */}
         {showTools && (
           <div className="absolute bottom-full left-0 mb-2 w-64 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl overflow-hidden z-20">
             <div className="py-1">
@@ -322,16 +530,20 @@ export const ChatEngine: React.FC = () => {
                 return (
                   <button
                     key={index}
-                    onClick={() => handleToolSelect(tool.name)}
-                    className={`w-full flex items-center space-x-3 px-4 py-3 hover:bg-gray-800 transition-colors text-left ${
-                      isSelected ? 'bg-purple-600/10 border-l-2 border-purple-500' : ''
-                    }`}
+                    onClick={() => {
+                      setSelectedTool(selectedTool === tool.name ? null : tool.name);
+                      setShowTools(false);
+                    }}
+                    className={cn(
+                      'w-full flex items-center space-x-3 px-4 py-3 hover:bg-gray-800 transition-colors text-left',
+                      isSelected ? 'bg-purple-600/10 border-l-2 border-purple-500' : '',
+                    )}
                   >
-                    <div className={`${isSelected ? 'text-purple-400' : 'text-gray-400'}`}>
+                    <div className={isSelected ? 'text-purple-400' : 'text-gray-400'}>
                       <IconComponent className="h-4 w-4" />
                     </div>
                     <div className="flex-1">
-                      <div className={`text-sm font-medium ${isSelected ? 'text-purple-300' : 'text-white'}`}>
+                      <div className={cn('text-sm font-medium', isSelected ? 'text-purple-300' : 'text-white')}>
                         {tool.name}
                       </div>
                       <div className="text-xs text-gray-500">{tool.description}</div>
@@ -347,98 +559,102 @@ export const ChatEngine: React.FC = () => {
     </div>
   );
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="h-full flex flex-col bg-[#0F0F23] text-white overflow-hidden relative">
-      <div className="flex-1 overflow-y-auto">
-        {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center p-8">
-            <div className="text-center mb-8">
-              <div className="flex items-center justify-center mb-4">
-                <Sun className="h-8 w-8 text-orange-400 mr-3" />
-                <h2 className="text-2xl font-light text-white">
-                  Happy {new Date().toLocaleDateString('en-US', { weekday: 'long' })}, {user?.name || 'User'}
-                </h2>
+    <div className="h-full flex bg-[#0F0F23] text-white overflow-hidden relative">
+      {/* ── Main chat column ── */}
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        <div className="flex-1 overflow-y-auto">
+          {messages.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center p-8">
+              <div className="text-center mb-8">
+                <div className="flex items-center justify-center mb-4">
+                  <Sun className="h-8 w-8 text-orange-400 mr-3" />
+                  <h2 className="text-2xl font-light text-white">
+                    Happy {new Date().toLocaleDateString('en-US', { weekday: 'long' })},{' '}
+                    {user?.name || 'User'}
+                  </h2>
+                </div>
+                <p className="text-lg text-gray-400">What can we do today?</p>
               </div>
-              <p className="text-lg text-gray-400">What can we do today?</p>
-            </div>
-            {renderInput(false)}
-            
-            <div className="w-full max-w-2xl">
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {[
-                  "Check wallet balance",
-                  "Recent transactions",
-                  "Deploy Stellar account",
-                  "Create contact",
-                  "Swap USDC to XLM",
-                  "Bitcoin price"
-                ].map((question, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setInputValue(question)}
-                    className="text-left px-3 py-2 bg-transparent border border-gray-700/50 rounded-lg hover:border-gray-600 transition-colors text-gray-400 hover:text-white"
-                  >
-                    <span className="text-xs font-medium">{question}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                {message.type === 'user' ? (
-                  <UserMessage 
-                    message={message} 
-                    onCopy={copyToClipboard}
-                    onEdit={handleEditMessage}
-                  />
-                ) : (
-                  <div className="max-w-2xl w-full">
-                    <AgentMessage message={message} onCopy={copyToClipboard} />
-                  </div>
-                )}
-              </div>
-            ))}
-            
-            {isTyping && (
-              <div className="flex justify-start">
-                <div className="bg-gray-900/80 backdrop-blur-sm border border-gray-800 rounded-2xl px-6 py-4 shadow-lg">
-                  <div className="flex items-center space-x-3">
-                    <div className="flex items-center space-x-1">
-                      <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" />
-                      <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
-                      <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-                    </div>
-                    <span className="text-sm text-gray-400">ChenPilot is thinking...</span>
-                  </div>
+              {renderInput(false)}
+
+              <div className="w-full max-w-2xl">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {[
+                    'Check wallet balance',
+                    'Recent transactions',
+                    'Deploy Stellar account',
+                    'Create contact',
+                    'Swap USDC to XLM',
+                    'Bitcoin price',
+                  ].map((question, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setInputValue(question)}
+                      className="text-left px-3 py-2 bg-transparent border border-gray-700/50 rounded-lg hover:border-gray-600 transition-colors text-gray-400 hover:text-white"
+                    >
+                      <span className="text-xs font-medium">{question}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
-            )}
-            <div ref={messagesEndRef} />
+            </div>
+          ) : (
+            <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+              {/* Only root messages in main list; replies live in ThreadPanel */}
+              {messages.filter((m) => !m.parentId).map((message) => (
+                <div
+                  key={message.id}
+                  className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  {message.type === 'user' ? (
+                    <UserMessage
+                      message={message}
+                      onCopy={copyToClipboard}
+                      onEdit={handleEditMessage}
+                      onReply={handleOpenThread}
+                    />
+                  ) : (
+                    <div className="max-w-2xl w-full">
+                      <AgentMessage
+                        message={message}
+                        onCopy={copyToClipboard}
+                        onReply={handleOpenThread}
+                      />
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {isTyping && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-900/80 backdrop-blur-sm border border-gray-800 rounded-2xl px-6 py-4 shadow-lg">
+                    <div className="flex items-center space-x-3">
+                      <div className="flex items-center space-x-1">
+                        <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" />
+                        <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }} />
+                        <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
+                      </div>
+                      <span className="text-sm text-gray-400">ChenPilot is thinking…</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </div>
+
+        {messages.length > 0 && (
+          <div className="relative z-10 border-t border-gray-800/50 bg-[#0F0F23]/80 backdrop-blur-xl">
+            {renderInput(true)}
           </div>
         )}
       </div>
-      
-      {messages.length > 0 && (
-        <div className="relative z-10 border-t border-gray-800/50 bg-[#0F0F23]/80 backdrop-blur-xl">
-          {renderInput(true)}
-        </div>
-      )}
 
-      <style jsx>{`
-        @keyframes slide-up {
-          0% { transform: translateY(10px); opacity: 0; }
-          100% { transform: translateY(0); opacity: 1; }
-        }
-        .animate-slide-up {
-          animation: slide-up 0.2s ease-out;
-        }
-      `}</style>
+      {/* ── Thread side panel ── */}
+      {activeThread && <ThreadPanel onClose={handleCloseThread} />}
     </div>
   );
 };

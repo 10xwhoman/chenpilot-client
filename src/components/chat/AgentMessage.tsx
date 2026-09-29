@@ -4,15 +4,16 @@ import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ChatMessage } from '@/types';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, MessageSquare } from 'lucide-react';
 import ExecutionTrace from './ExecutionTrace';
 
 interface AgentMessageProps {
   message: ChatMessage;
   onCopy?: (text: string) => void;
+  onReply?: (messageId: string) => void;
 }
 
-export default function AgentMessage({ message, onCopy }: AgentMessageProps) {
+export default function AgentMessage({ message, onCopy, onReply }: AgentMessageProps) {
   const [copied, setCopied] = useState(false);
 
   // Handle both string and object content
@@ -220,8 +221,9 @@ export default function AgentMessage({ message, onCopy }: AgentMessageProps) {
   };
 
   return (
-    <div className="text-white text-left group relative">
-      <div className="prose prose-invert prose-lg max-w-none leading-relaxed pr-8">
+    <div className="flex flex-col items-start">
+      <div className="text-white text-left group relative w-full">
+        <div className="prose prose-invert prose-lg max-w-none leading-relaxed pr-8">
         <ReactMarkdown 
           remarkPlugins={[remarkGfm]}
           components={{
@@ -241,24 +243,51 @@ export default function AgentMessage({ message, onCopy }: AgentMessageProps) {
         >
           {renderContent()}
         </ReactMarkdown>
-      </div>
+        </div>
       
       {/* Execution Trace */}
       {message.metadata?.executionTrace && (
         <ExecutionTrace trace={message.metadata.executionTrace} />
       )}
       
-      <button
-        onClick={handleCopy}
-        className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-gray-400 hover:text-white"
-        title="Copy message"
-      >
-        {copied ? (
-          <Check className="h-4 w-4 text-green-400" />
-        ) : (
-          <Copy className="h-4 w-4" />
+      {/* Hover actions: copy + reply */}
+      <div className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center space-x-1 p-1">
+        <button
+          onClick={handleCopy}
+          className="p-1 text-gray-400 hover:text-white transition-colors"
+          title="Copy message"
+        >
+          {copied ? (
+            <Check className="h-4 w-4 text-green-400" />
+          ) : (
+            <Copy className="h-4 w-4" />
+          )}
+        </button>
+        {onReply && (
+          <button
+            onClick={() => onReply(message.id)}
+            className="p-1 text-gray-400 hover:text-white transition-colors"
+            title="Reply in thread"
+          >
+            <MessageSquare className="h-4 w-4" />
+          </button>
         )}
+      </div>
+    </div>
+
+    {/* Thread reply-count badge – shown below the bubble */}
+    {(message.replyCount ?? 0) > 0 && onReply && (
+      <button
+        onClick={() => onReply(message.id)}
+        className="mt-1.5 flex items-center space-x-1 text-xs text-purple-400 hover:text-purple-300 transition-colors"
+        aria-label={`View ${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}`}
+      >
+        <MessageSquare className="h-3.5 w-3.5" />
+        <span>
+          {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
+        </span>
       </button>
+    )}
     </div>
   );
 }
