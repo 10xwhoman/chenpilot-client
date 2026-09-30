@@ -134,15 +134,8 @@ export const sortMessagesChronologically = (messages: ChatMessage[]): ChatMessag
 export type SendMessageArg = string | { query: string; tempId?: string; clientTimestamp?: number };
 
 export const sendMessage = createAsyncThunk(
-'chat/sendMessage',
+  'chat/sendMessage',
   async (arg: SendMessageArg, { getState, rejectWithValue, requestId }) => {
-    const state = getState() as any;
-
-    // Concurrency guard: prevent multiple simultaneous queries
-    if (state.chat.isLoading || state.chat.isTyping) {
-      return rejectWithValue("A query is already in progress");
-    }
-
     const query = typeof arg === 'string' ? arg : arg.query;
     const tempId = typeof arg === 'object' && arg.tempId ? arg.tempId : `msg_optimistic_${requestId}`;
     const clientTimestamp = typeof arg === 'object' && arg.clientTimestamp ? arg.clientTimestamp : Date.now();
@@ -171,14 +164,6 @@ export const sendMessage = createAsyncThunk(
           messageCount: 0,
         };
       }
-
-// Save user message locally (no server call needed)
-      const userMessage: ChatMessage = {
-        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        type: "user",
-        content: query,
-        timestamp: new Date().toISOString(),
-      };
 
       // Call the API service to get actual response
       const response = await apiService.queryAgent({ userId, query });
