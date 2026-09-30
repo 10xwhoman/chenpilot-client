@@ -539,3 +539,31 @@ export interface AuditLogStats {
   warningsToday: number;
   recentActivity: AuditLogEntry[];
 }
+
+// Send Payment Types
+export interface SendPaymentRequest {
+  recipientAddress: string;
+  amount: string;
+  tokenType: 'XLM' | 'USDC' | 'USDT' | 'BTC' | 'ETH' | 'AQUA';
+  memo?: string;
+  memoType?: 'none' | 'text' | 'id' | 'hash';
+}
+
+export interface SendPaymentValidationResult {
+  isValid: boolean;
+  errors: string[];
+  data?: SendPaymentRequest;
+}
+
+export interface PaymentLimits {
+  minAmount: number;
+  maxAmount: number;
+  maxMemoLength: number;
+  supportedTokens: TokenType[];
+}
+
+export interface PaymentFeeEstimate {
+  baseFee: string;
+  estimatedTotal: string;
+  tokenType: string;
+}
