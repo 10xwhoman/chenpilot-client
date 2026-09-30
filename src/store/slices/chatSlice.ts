@@ -1,7 +1,7 @@
-import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
-import { ChatMessage, AgentQueryRequest, Conversation } from '@/types';
-import { AgentQueryResponse } from '@/types/agent';
-import apiService from '@/services/api';
+import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
+import { ChatMessage, AgentQueryRequest, Conversation } from "@/types";
+import { AgentQueryResponse } from "@/types/agent";
+import apiService from "@/services/api";
 
 interface ChatState {
   messages: ChatMessage[];
@@ -16,6 +16,11 @@ interface ChatState {
     capabilities: any;
   };
   chatHistory: { [conversationId: string]: ChatMessage[] };
+  tags: { [userId: string]: string[] };
+  selectedTags: string[];
+  isOnline: boolean;
+  messageQueue: Array<{ id: string; query: string; timestamp: string }>;
+  pendingMessages: Set<string>;
 }
 
 const initialState: ChatState = {
@@ -31,40 +36,45 @@ const initialState: ChatState = {
     capabilities: null,
   },
   chatHistory: {},
+  tags: {},
+  selectedTags: [],
+  isOnline: typeof window !== "undefined" && navigator.onLine,
+  messageQueue: [],
+  pendingMessages: new Set(),
 };
 
 // Async thunks
 // Removed server-side conversation thunks - now handled client-side
 
 export const getOrCreateActiveConversation = createAsyncThunk(
-  'chat/getOrCreateActiveConversation',
+  "chat/getOrCreateActiveConversation",
   async (_, { getState, rejectWithValue }) => {
     try {
       const state = getState() as any;
       const currentConversation = state.chat.currentConversation;
-      
+
       // If we already have an active conversation, return it
       if (currentConversation) {
         return currentConversation;
       }
-      
+
       // Create a new conversation locally
       const newConversation: Conversation = {
         id: `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        title: 'New Chat',
-        description: 'A new conversation',
+        title: "New Chat",
+        description: "A new conversation",
         isActive: true,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        userId: state.auth.user?.id || 'anonymous',
-        messageCount: 0
+        userId: state.auth.user?.id || "anonymous",
+        messageCount: 0,
       };
-      
+
       return newConversation;
     } catch (error: any) {
-      return rejectWithValue('Failed to create conversation');
+      return rejectWithValue("Failed to create conversation");
     }
-  }
+  },
 );
 
 // Helper functions for message ordering & timestamps (#86)
@@ -124,8 +134,15 @@ export const sortMessagesChronologically = (messages: ChatMessage[]): ChatMessag
 export type SendMessageArg = string | { query: string; tempId?: string; clientTimestamp?: number };
 
 export const sendMessage = createAsyncThunk(
-  'chat/sendMessage',
+'chat/sendMessage',
   async (arg: SendMessageArg, { getState, rejectWithValue, requestId }) => {
+    const state = getState() as any;
+
+    // Concurrency guard: prevent multiple simultaneous queries
+    if (state.chat.isLoading || state.chat.isTyping) {
+      return rejectWithValue("A query is already in progress");
+    }
+
     const query = typeof arg === 'string' ? arg : arg.query;
     const tempId = typeof arg === 'object' && arg.tempId ? arg.tempId : `msg_optimistic_${requestId}`;
     const clientTimestamp = typeof arg === 'object' && arg.clientTimestamp ? arg.clientTimestamp : Date.now();
@@ -134,9 +151,9 @@ export const sendMessage = createAsyncThunk(
       const state = getState() as any;
       const userId = state.auth.user?.id;
       const currentConversation = state.chat.currentConversation;
-      
+
       if (!userId) {
-        return rejectWithValue('User not authenticated');
+        return rejectWithValue("User not authenticated");
       }
 
       // Get or create active conversation locally
@@ -145,31 +162,49 @@ export const sendMessage = createAsyncThunk(
         // Create a new conversation locally
         conversation = {
           id: `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          title: 'New Chat',
-          description: 'A new conversation',
+          title: "New Chat",
+          description: "A new conversation",
           isActive: true,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           userId: userId,
-          messageCount: 0
+          messageCount: 0,
         };
       }
 
+// Save user message locally (no server call needed)
+      const userMessage: ChatMessage = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: "user",
+        content: query,
+        timestamp: new Date().toISOString(),
+      };
+
       // Call the API service to get actual response
       const response = await apiService.queryAgent({ userId, query });
-      
+
       // Handle parsing of the agent response
       let content = response.result.data;
-      
+
       // If the response data is a string that looks like JSON, try to parse it
-      if (typeof content === 'string' && (content.trim().startsWith('{') || content.trim().startsWith('['))) {
+      if (
+        typeof content === "string" &&
+        (content.trim().startsWith("{") || content.trim().startsWith("["))
+      ) {
         try {
           const parsed = JSON.parse(content);
-          if (parsed && typeof parsed === 'object') {
-            console.log('[ChatSlice] Structured agent response:', parsed);
+          // If successfully parsed and it's an object/array, we might want to
+          // extract a 'message' field if it exists, or just keep it as structured data
+          if (parsed && typeof parsed === "object") {
+            // If it has a specific 'message' or 'text' field, we might use that for display
+            // but for now we keep the whole object as metadata or stringify it for content
+            console.log("[ChatSlice] Structured agent response:", parsed);
           }
         } catch (e) {
-          console.log('[ChatSlice] Response is not valid JSON, keeping as string');
+          // Not valid JSON or parsing failed, keep as string
+          console.log(
+            "[ChatSlice] Response is not valid JSON, keeping as string",
+          );
         }
       }
 
@@ -203,7 +238,7 @@ export const sendMessage = createAsyncThunk(
       // Create agent message with execution trace if available
       const agentMessage: ChatMessage = {
         id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        type: 'agent',
+        type: "agent",
         content: content,
         timestamp: new Date(serverTimestamp).toISOString(),
         serverTimestamp: serverTimestamp,
@@ -212,21 +247,25 @@ export const sendMessage = createAsyncThunk(
           success: response.result.success,
           error: response.result.error,
           executionTrace: response.result.executionTrace,
-          serverTimestamp: serverTimestamp,
-          rawData: typeof content !== 'string' ? content : undefined
+serverTimestamp: serverTimestamp,
+          // Store raw structured data in metadata if it was JSON
+          rawData: typeof content !== "string" ? content : undefined,
         }
       };
 
       return { response, conversation, userMessage, agentMessage, tempId };
     } catch (error: any) {
-      const errorMsg = error.response?.data?.message || error.message || 'Failed to send message';
+      const errorMsg =
+        error.response?.data?.message ||
+        error.message ||
+        "Failed to send message";
       return rejectWithValue(errorMsg);
     }
-  }
+  },
 );
 
 const chatSlice = createSlice({
-  name: 'chat',
+  name: "chat",
   initialState,
   reducers: {
     clearError: (state) => {
@@ -239,7 +278,7 @@ const chatSlice = createSlice({
     addUserMessage: (state, action: PayloadAction<string>) => {
       const userMessage: ChatMessage = {
         id: Date.now().toString(),
-        type: 'user',
+        type: "user",
         content: action.payload,
         timestamp: new Date().toISOString(),
         serverTimestamp: Date.now(),
@@ -247,10 +286,13 @@ const chatSlice = createSlice({
       state.messages.push(userMessage);
       state.messages = sortMessagesChronologically(state.messages);
     },
-    addSystemMessage: (state, action: PayloadAction<{ content: string; metadata?: any }>) => {
+    addSystemMessage: (
+      state,
+      action: PayloadAction<{ content: string; metadata?: any }>,
+    ) => {
       const systemMessage: ChatMessage = {
         id: Date.now().toString(),
-        type: 'system',
+        type: "system",
         content: action.payload.content,
         timestamp: new Date().toISOString(),
         serverTimestamp: Date.now(),
@@ -268,23 +310,43 @@ const chatSlice = createSlice({
     setConversations: (state, action: PayloadAction<Conversation[]>) => {
       state.conversations = action.payload;
     },
-    setCurrentConversation: (state, action: PayloadAction<Conversation | null>) => {
+    setCurrentConversation: (
+      state,
+      action: PayloadAction<Conversation | null>,
+    ) => {
       state.currentConversation = action.payload;
     },
     setTyping: (state, action: PayloadAction<boolean>) => {
       state.isTyping = action.payload;
     },
-    updateMessage: (state, action: PayloadAction<{ id: string; updates: Partial<ChatMessage> }>) => {
-      const index = state.messages.findIndex(msg => msg.id === action.payload.id);
+    updateMessage: (
+      state,
+      action: PayloadAction<{ id: string; updates: Partial<ChatMessage> }>,
+    ) => {
+      const index = state.messages.findIndex(
+        (msg) => msg.id === action.payload.id,
+      );
       if (index !== -1) {
-        state.messages[index] = { ...state.messages[index], ...action.payload.updates };
+state.messages[index] = {
+          ...state.messages[index],
+          ...action.payload.updates,
+        };
         state.messages = sortMessagesChronologically(state.messages);
       }
     },
     removeMessage: (state, action: PayloadAction<string>) => {
-      state.messages = state.messages.filter(msg => msg.id !== action.payload);
+      state.messages = state.messages.filter(
+        (msg) => msg.id !== action.payload,
+      );
     },
-    updateAgentStatus: (state, action: PayloadAction<{ isConnected: boolean; lastHealthCheck: string | null; capabilities?: any }>) => {
+    updateAgentStatus: (
+      state,
+      action: PayloadAction<{
+        isConnected: boolean;
+        lastHealthCheck: string | null;
+        capabilities?: any;
+      }>,
+    ) => {
       state.agentStatus = { ...state.agentStatus, ...action.payload };
     },
     setAgentConnected: (state, action: PayloadAction<boolean>) => {
@@ -299,8 +361,8 @@ const chatSlice = createSlice({
       state.messages = [];
       state.currentConversation = null;
       // Save to localStorage
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('chat_history', JSON.stringify(state.chatHistory));
+      if (typeof window !== "undefined") {
+        localStorage.setItem("chat_history", JSON.stringify(state.chatHistory));
       }
     },
     loadChatHistory: (state, action: PayloadAction<string>) => {
@@ -315,8 +377,11 @@ const chatSlice = createSlice({
       if (state.currentConversation && state.messages.length > 0) {
         state.chatHistory[state.currentConversation.id] = [...state.messages];
         // Save to localStorage
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('chat_history', JSON.stringify(state.chatHistory));
+        if (typeof window !== "undefined") {
+          localStorage.setItem(
+            "chat_history",
+            JSON.stringify(state.chatHistory),
+          );
         }
       }
     },
@@ -324,18 +389,18 @@ const chatSlice = createSlice({
       const conversationId = action.payload;
       delete state.chatHistory[conversationId];
       // Save to localStorage
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('chat_history', JSON.stringify(state.chatHistory));
+      if (typeof window !== "undefined") {
+        localStorage.setItem("chat_history", JSON.stringify(state.chatHistory));
       }
     },
     initializeChatHistory: (state) => {
-      if (typeof window !== 'undefined') {
-        const savedHistory = localStorage.getItem('chat_history');
+      if (typeof window !== "undefined") {
+        const savedHistory = localStorage.getItem("chat_history");
         if (savedHistory) {
           try {
             state.chatHistory = JSON.parse(savedHistory);
           } catch (error) {
-            console.error('Failed to parse chat history:', error);
+            console.error("Failed to parse chat history:", error);
             state.chatHistory = {};
           }
         }
@@ -344,41 +409,175 @@ const chatSlice = createSlice({
     saveConversationLocally: (state, action: PayloadAction<Conversation>) => {
       const conversation = action.payload;
       state.conversations.unshift(conversation);
-      
+
       // Save to localStorage
-      if (typeof window !== 'undefined') {
-        const conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
+      if (typeof window !== "undefined") {
+        const conversations = JSON.parse(
+          localStorage.getItem("conversations") || "[]",
+        );
         conversations.unshift(conversation);
-        localStorage.setItem('conversations', JSON.stringify(conversations));
+        localStorage.setItem("conversations", JSON.stringify(conversations));
       }
     },
     loadConversationsLocally: (state) => {
-      if (typeof window !== 'undefined') {
-        const conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
+      if (typeof window !== "undefined") {
+        const conversations = JSON.parse(
+          localStorage.getItem("conversations") || "[]",
+        );
         state.conversations = conversations;
       }
     },
     deleteConversationLocally: (state, action: PayloadAction<string>) => {
       const conversationId = action.payload;
-      state.conversations = state.conversations.filter(conv => conv.id !== conversationId);
+      state.conversations = state.conversations.filter(
+        (conv) => conv.id !== conversationId,
+      );
       delete state.chatHistory[conversationId];
-      
+
       // Update localStorage
-      if (typeof window !== 'undefined') {
-        const conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
-        const updatedConversations = conversations.filter((conv: Conversation) => conv.id !== conversationId);
-        localStorage.setItem('conversations', JSON.stringify(updatedConversations));
-        
-        const chatHistory = JSON.parse(localStorage.getItem('chat_history') || '{}');
+      if (typeof window !== "undefined") {
+        const conversations = JSON.parse(
+          localStorage.getItem("conversations") || "[]",
+        );
+        const updatedConversations = conversations.filter(
+          (conv: Conversation) => conv.id !== conversationId,
+        );
+        localStorage.setItem(
+          "conversations",
+          JSON.stringify(updatedConversations),
+        );
+
+        const chatHistory = JSON.parse(
+          localStorage.getItem("chat_history") || "{}",
+        );
         delete chatHistory[conversationId];
-        localStorage.setItem('chat_history', JSON.stringify(chatHistory));
+        localStorage.setItem("chat_history", JSON.stringify(chatHistory));
       }
+    },
+    addTag: (
+      state,
+      action: PayloadAction<{ conversationId: string; tag: string }>,
+    ) => {
+      const { conversationId, tag } = action.payload;
+      const conversation = state.conversations.find(
+        (c) => c.id === conversationId,
+      );
+      if (conversation) {
+        if (!conversation.tags) conversation.tags = [];
+        if (!conversation.tags.includes(tag)) {
+          conversation.tags.push(tag);
+        }
+        // Persist to localStorage
+        if (typeof window !== "undefined") {
+          const conversations = JSON.parse(
+            localStorage.getItem("conversations") || "[]",
+          );
+          const index = conversations.findIndex(
+            (c: Conversation) => c.id === conversationId,
+          );
+          if (index !== -1) {
+            conversations[index] = conversation;
+            localStorage.setItem(
+              "conversations",
+              JSON.stringify(conversations),
+            );
+          }
+        }
+      }
+    },
+    removeTag: (
+      state,
+      action: PayloadAction<{ conversationId: string; tag: string }>,
+    ) => {
+      const { conversationId, tag } = action.payload;
+      const conversation = state.conversations.find(
+        (c) => c.id === conversationId,
+      );
+      if (conversation && conversation.tags) {
+        conversation.tags = conversation.tags.filter((t) => t !== tag);
+        // Persist to localStorage
+        if (typeof window !== "undefined") {
+          const conversations = JSON.parse(
+            localStorage.getItem("conversations") || "[]",
+          );
+          const index = conversations.findIndex(
+            (c: Conversation) => c.id === conversationId,
+          );
+          if (index !== -1) {
+            conversations[index] = conversation;
+            localStorage.setItem(
+              "conversations",
+              JSON.stringify(conversations),
+            );
+          }
+        }
+      }
+    },
+    setSelectedTags: (state, action: PayloadAction<string[]>) => {
+      state.selectedTags = action.payload;
+    },
+    setOnlineStatus: (state, action: PayloadAction<boolean>) => {
+      state.isOnline = action.payload;
+    },
+    queueMessage: (
+      state,
+      action: PayloadAction<{ id: string; query: string }>,
+    ) => {
+      state.messageQueue.push({
+        id: action.payload.id,
+        query: action.payload.query,
+        timestamp: new Date().toISOString(),
+      });
+      // Persist queue to localStorage
+      if (typeof window !== "undefined") {
+        localStorage.setItem(
+          "messageQueue",
+          JSON.stringify(state.messageQueue),
+        );
+      }
+    },
+    dequeueMessage: (state, action: PayloadAction<string>) => {
+      state.messageQueue = state.messageQueue.filter(
+        (msg) => msg.id !== action.payload,
+      );
+      // Persist queue to localStorage
+      if (typeof window !== "undefined") {
+        localStorage.setItem(
+          "messageQueue",
+          JSON.stringify(state.messageQueue),
+        );
+      }
+    },
+    clearMessageQueue: (state) => {
+      state.messageQueue = [];
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("messageQueue");
+      }
+    },
+    loadMessageQueue: (state) => {
+      if (typeof window !== "undefined") {
+        const savedQueue = localStorage.getItem("messageQueue");
+        if (savedQueue) {
+          try {
+            state.messageQueue = JSON.parse(savedQueue);
+          } catch (error) {
+            console.error("Failed to parse message queue:", error);
+            state.messageQueue = [];
+          }
+        }
+      }
+    },
+    addPendingMessage: (state, action: PayloadAction<string>) => {
+      state.pendingMessages.add(action.payload);
+    },
+    removePendingMessage: (state, action: PayloadAction<string>) => {
+      state.pendingMessages.delete(action.payload);
     },
   },
   extraReducers: (builder) => {
     builder
       // Removed server conversation extraReducers - now handled client-side
-      
+
       // Get or Create Active Conversation
       .addCase(getOrCreateActiveConversation.pending, (state) => {
         state.isLoading = true;
@@ -394,7 +593,7 @@ const chatSlice = createSlice({
         state.isLoading = false;
         state.error = action.payload as string;
       })
-      
+
       // Send Message
       .addCase(sendMessage.pending, (state, action) => {
         state.isLoading = true;
@@ -434,27 +633,58 @@ const chatSlice = createSlice({
         state.isLoading = false;
         state.isTyping = false;
         state.currentConversation = action.payload.conversation;
-        
+
         // Debug logging to see what the server is returning
-        console.log('[ChatSlice] Full response:', action.payload.response);
-        console.log('[ChatSlice] Response result:', action.payload.response.result);
-        console.log('[ChatSlice] Response data:', action.payload.response.result.data);
-        
+console.log("[ChatSlice] Full response:", action.payload.response);
+        console.log(
+          "[ChatSlice] Response result:",
+          action.payload.response.result,
+        );
+        console.log(
+          "[ChatSlice] Response data:",
+          action.payload.response.result.data,
+        );
+
+        // Handle different response formats
+        let content = action.payload.response.result.data;
+
+        // If the response data is an object with structured data, use it directly
+        if (typeof content === "object" && content !== null) {
+          // The content is already structured, use it as is
+          console.log("[ChatSlice] Using structured content:", content);
+        } else if (typeof content === "string") {
+          // Try to parse if it's a JSON string
+          try {
+            const parsed = JSON.parse(content);
+            if (typeof parsed === "object" && parsed !== null) {
+              content = parsed;
+              console.log("[ChatSlice] Parsed JSON content:", content);
+            }
+          } catch (e) {
+            // Not JSON, use as string
+            console.log("[ChatSlice] Using string content:", content);
+          }
+        }
+
         const { userMessage, agentMessage, tempId } = action.payload;
 
         // Resolve optimistic user message
         const optimisticIdx = state.messages.findIndex(
-          m => m.id === tempId || m.id === userMessage.id || m.metadata?.optimisticId === tempId || m.metadata?.tempId === tempId
+          (m) =>
+            m.id === tempId ||
+            m.id === userMessage?.id ||
+            m.metadata?.optimisticId === tempId ||
+            m.metadata?.tempId === tempId,
         );
 
-        if (optimisticIdx !== -1) {
+        if (optimisticIdx !== -1 && userMessage) {
           state.messages[optimisticIdx] = {
             ...state.messages[optimisticIdx],
             ...userMessage,
             metadata: {
               ...state.messages[optimisticIdx].metadata,
               ...userMessage.metadata,
-              status: 'success',
+              status: "success",
             },
           };
         } else if (userMessage) {
@@ -471,11 +701,14 @@ const chatSlice = createSlice({
         // Save chat history after each message
         if (state.currentConversation) {
           state.chatHistory[state.currentConversation.id] = [...state.messages];
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('chat_history', JSON.stringify(state.chatHistory));
+          if (typeof window !== "undefined") {
+            localStorage.setItem(
+              "chat_history",
+              JSON.stringify(state.chatHistory),
+            );
           }
         }
-        
+
         state.error = null;
       })
       .addCase(sendMessage.rejected, (state, action) => {
@@ -483,7 +716,7 @@ const chatSlice = createSlice({
         state.isTyping = false;
         state.error = action.payload as string;
 
-        const tempId = typeof action.meta.arg === 'object' && action.meta.arg.tempId
+const tempId = typeof action.meta.arg === 'object' && action.meta.arg.tempId
           ? action.meta.arg.tempId
           : `msg_optimistic_${action.meta.requestId}`;
 
@@ -499,12 +732,13 @@ const chatSlice = createSlice({
             error: String(action.payload),
           };
         }
-        
+
         // Add error message with friendly content
-        const errorContent = action.payload instanceof Error 
-          ? action.payload.message 
-          : String(action.payload);
-        
+        const errorContent =
+          action.payload instanceof Error
+            ? action.payload.message
+            : String(action.payload);
+
         // Convert technical error messages to user-friendly ones
         let friendlyMessage = errorContent;
         if (errorContent.toLowerCase().includes('network') || errorContent.toLowerCase().includes('connection')) {
@@ -516,17 +750,17 @@ const chatSlice = createSlice({
         } else if (errorContent.includes('User not authenticated')) {
           friendlyMessage = "Please log in to continue the conversation.";
         }
-        
+
         const errorMessage: ChatMessage = {
-          id: `msg_err_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'agent',
+id: `msg_err_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: "agent",
           content: friendlyMessage,
           timestamp: new Date().toISOString(),
           serverTimestamp: Date.now(),
           metadata: {
             success: false,
-            type: 'error',
-            status: 'failed',
+type: "error",
+            status: "failed",
             error: errorContent,
           },
         };
@@ -558,5 +792,15 @@ export const {
   saveConversationLocally,
   loadConversationsLocally,
   deleteConversationLocally,
+  addTag,
+  removeTag,
+  setSelectedTags,
+  setOnlineStatus,
+  queueMessage,
+  dequeueMessage,
+  clearMessageQueue,
+  loadMessageQueue,
+  addPendingMessage,
+  removePendingMessage,
 } = chatSlice.actions;
 export default chatSlice.reducer;
