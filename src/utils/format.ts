@@ -78,9 +78,8 @@ export function formatDate(date: string | Date, options?: Intl.DateTimeFormatOpt
  * @param date - Date string or Date object
  * @returns Relative time string
  */
-export function formatRelativeTime(date: string | Date): string {
+export function formatRelativeTime(date: string | Date, now: Date = new Date()): string {
   const dateObj = typeof date === 'string' ? new Date(date) : date;
-  const now = new Date();
   const diffInSeconds = Math.floor((now.getTime() - dateObj.getTime()) / 1000);
 
   if (diffInSeconds < 60) {

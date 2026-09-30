@@ -177,6 +177,19 @@ export const fetchProfile = createAsyncThunk(
   }
 );
 
+export const resendVerification = createAsyncThunk(
+  'auth/resendVerification',
+  async (email: string, { rejectWithValue }) => {
+    try {
+      const response = await apiService.resendVerification(email);
+      if (!response.success) return rejectWithValue(response.message || 'Could not resend verification email');
+      return response.data;
+    } catch (error: unknown) {
+      return rejectWithValue((error as { message?: string }).message || 'Could not resend verification email');
+    }
+  }
+);
+
 const authSlice = createSlice({
   name: 'auth',
   initialState,
@@ -366,5 +379,4 @@ const authSlice = createSlice({
 });
 
 export const { clearError, setToken, clearAuth, initializeAuth } = authSlice.actions;
-export { login, register, logout, loadUser, updateProfile, changePassword, googleAuth, refreshToken, fetchProfile };
 export default authSlice.reducer;

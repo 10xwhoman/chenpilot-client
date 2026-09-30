@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { SocketManager, SocketConfig } from '../socketManager';
+import { SocketManager, SocketConfig, getSocketManager, initializeSocketManager } from '../socketManager';
+import { io } from 'socket.io-client';
 
-// Mock socket.io-client
-vi.mock('socket.io-client', () => {
-  const mockSocket = {
+const { mockSocket, ioMock } = vi.hoisted(() => {
+  const socket = {
     on: vi.fn().mockReturnThis(),
     off: vi.fn().mockReturnThis(),
     once: vi.fn().mockReturnThis(),
@@ -12,18 +12,18 @@ vi.mock('socket.io-client', () => {
     connected: false,
     id: 'mock-socket-id',
   };
-
-  return {
-    io: vi.fn(() => mockSocket),
-    Socket: vi.fn(),
-  };
+  return { mockSocket: socket, ioMock: vi.fn(() => socket) };
 });
+
+vi.mock('socket.io-client', () => ({ io: ioMock }));
 
 describe('SocketManager', () => {
   let config: SocketConfig;
   let socketManager: SocketManager;
 
   beforeEach(() => {
+    vi.clearAllMocks();
+    mockSocket.connected = false;
     config = {
       url: 'http://localhost:3001',
       options: {
@@ -38,9 +38,7 @@ describe('SocketManager', () => {
     socketManager = new SocketManager(config);
   });
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+  afterEach(() => vi.clearAllMocks());
 
   describe('constructor', () => {
     it('should create a SocketManager with provided config', () => {
@@ -50,7 +48,6 @@ describe('SocketManager', () => {
     it('should merge provided options with defaults', () => {
       const manager = new SocketManager({ url: 'http://test.com' });
       // Accessing private config via connect to verify defaults are applied
-      const { io } = require('socket.io-client');
       manager.connect();
       expect(io).toHaveBeenCalledWith('http://test.com', {
         transports: ['websocket', 'polling'],
@@ -63,7 +60,6 @@ describe('SocketManager', () => {
     });
 
     it('should override defaults with provided options', () => {
-      const { io } = require('socket.io-client');
       socketManager.connect();
       expect(io).toHaveBeenCalledWith('http://localhost:3001', {
         transports: ['websocket'],
@@ -82,7 +78,6 @@ describe('SocketManager', () => {
           timeout: 15000,
         },
       });
-      const { io } = require('socket.io-client');
       manager.connect();
       expect(io).toHaveBeenCalledWith('http://test.com', {
         transports: ['websocket', 'polling'],
@@ -97,7 +92,6 @@ describe('SocketManager', () => {
 
   describe('connect', () => {
     it('should create a socket connection', () => {
-      const { io } = require('socket.io-client');
       const socket = socketManager.connect();
 
       expect(io).toHaveBeenCalledTimes(1);
@@ -106,9 +100,9 @@ describe('SocketManager', () => {
 
     it('should return existing socket if already connected', () => {
       const socket1 = socketManager.connect();
+      mockSocket.connected = true;
       const socket2 = socketManager.connect();
 
-      const { io } = require('socket.io-client');
       expect(io).toHaveBeenCalledTimes(1);
       expect(socket1).toBe(socket2);
     });
@@ -167,8 +161,7 @@ describe('SocketManager', () => {
     });
 
     it('should return true when socket is connected', () => {
-      const { io } = require('socket.io-client');
-      const mockSocket = io();
+      io();
       mockSocket.connected = true;
 
       socketManager.connect();
@@ -178,8 +171,6 @@ describe('SocketManager', () => {
 
   describe('emit', () => {
     it('should emit event when connected', () => {
-      const { io } = require('socket.io-client');
-      const mockSocket = io();
       mockSocket.connected = true;
 
       socketManager.connect();
@@ -189,9 +180,6 @@ describe('SocketManager', () => {
     });
 
     it('should not emit event when not connected', () => {
-      const { io } = require('socket.io-client');
-      const mockSocket = io();
-
       socketManager.connect();
       socketManager.emit('test-event', { data: 'test' });
 
@@ -247,23 +235,18 @@ describe('SocketManager', () => {
 
 describe('getSocketManager', () => {
   beforeEach(() => {
-    // Clear the singleton by re-importing fresh module
-    vi.resetModules();
   });
 
   it('should throw if called without config and no instance exists', () => {
-    const { getSocketManager } = require('../socketManager');
     expect(() => getSocketManager()).toThrow('SocketManager not initialized');
   });
 
   it('should create instance when config is provided', () => {
-    const { getSocketManager } = require('../socketManager');
     const manager = getSocketManager({ url: 'http://test.com' });
     expect(manager).toBeInstanceOf(SocketManager);
   });
 
   it('should return same instance on subsequent calls', () => {
-    const { getSocketManager } = require('../socketManager');
     const manager1 = getSocketManager({ url: 'http://test.com' });
     const manager2 = getSocketManager();
     expect(manager1).toBe(manager2);
@@ -272,17 +255,14 @@ describe('getSocketManager', () => {
 
 describe('initializeSocketManager', () => {
   beforeEach(() => {
-    vi.resetModules();
   });
 
   it('should create a new SocketManager instance', () => {
-    const { initializeSocketManager } = require('../socketManager');
     const manager = initializeSocketManager({ url: 'http://test.com' });
     expect(manager).toBeInstanceOf(SocketManager);
   });
 
   it('should replace existing singleton instance', () => {
-    const { initializeSocketManager, getSocketManager } = require('../socketManager');
     const manager1 = initializeSocketManager({ url: 'http://test.com' });
     const manager2 = initializeSocketManager({ url: 'http://other.com' });
     const manager3 = getSocketManager();

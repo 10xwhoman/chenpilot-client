@@ -20,7 +20,7 @@ import toast from "react-hot-toast";
 import { X, Menu, PanelLeft, Plus } from "lucide-react";
 import { cn } from "@/utils/cn";
 import Image from "next/image";
-import Image from "next/image";
+import { EmailVerificationBanner } from "@/components/auth/EmailVerificationBanner";
 
 interface ChatLayoutProps {
   children: React.ReactNode;
@@ -371,7 +371,10 @@ export function ChatLayout({ children }: ChatLayoutProps) {
         </div>
 
         {/* Page content */}
-        <main className="flex-1 overflow-hidden">{children}</main>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {pathname && (pathname.startsWith('/dashboard') || pathname.startsWith('/chat') || pathname.startsWith('/settings')) && <EmailVerificationBanner />}
+          <main className="min-h-0 flex-1 overflow-auto">{children}</main>
+        </div>
       </div>
     </div>
   );
