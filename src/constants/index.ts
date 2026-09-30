@@ -293,3 +293,64 @@ export const Z_INDEX = {
   TOOLTIP: 1070,
   TOAST: 1080,
 } as const;
+
+// Account Deployment Constants
+export const DEPLOYMENT_STEPS = {
+  AUTH: {
+    id: 'auth' as const,
+    title: 'Authentication',
+    description: 'Securely authenticate your account',
+    icon: 'Shield',
+  },
+  FUNDING: {
+    id: 'funding' as const,
+    title: 'Account Funding',
+    description: 'Receive initial funding for your account',
+    icon: 'Coins',
+  },
+  DEPLOYMENT: {
+    id: 'deployment' as const,
+    title: 'Account Deployment',
+    description: 'Deploy your smart contract account',
+    icon: 'Rocket',
+  },
+  VERIFICATION: {
+    id: 'verification' as const,
+    title: 'Verification',
+    description: 'Verify account deployment and functionality',
+    icon: 'CheckCircle',
+  },
+  COMPLETE: {
+    id: 'complete' as const,
+    title: 'Complete',
+    description: 'Your account is ready for use',
+    icon: 'Sparkles',
+  },
+} as const;
+
+export const DEPLOYMENT_STATUS = {
+  PENDING: 'pending' as const,
+  IN_PROGRESS: 'in_progress' as const,
+  COMPLETED: 'completed' as const,
+  FAILED: 'failed' as const,
+} as const;
+
+export const DEPLOYMENT_MESSAGES = {
+  AUTH_SUCCESS: 'Authentication successful',
+  FUNDING_SUCCESS: 'Account funded successfully',
+  DEPLOYMENT_SUCCESS: 'Account deployed successfully',
+  VERIFICATION_SUCCESS: 'Account verified successfully',
+  AUTH_FAILED: 'Authentication failed',
+  FUNDING_FAILED: 'Funding failed',
+  DEPLOYMENT_FAILED: 'Deployment failed',
+  VERIFICATION_FAILED: 'Verification failed',
+  NETWORK_ERROR: 'Network error, please try again',
+  TIMEOUT_ERROR: 'Operation timed out',
+} as const;
+
+export const DEPLOYMENT_CONFIG = {
+  DEFAULT_FUNDING_AMOUNT: '2', // XLM
+  MAX_RETRIES: 3,
+  RETRY_DELAY: 2000, // ms
+  TIMEOUT: 30000, // ms
+} as const;

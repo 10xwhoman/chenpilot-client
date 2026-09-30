@@ -567,3 +567,33 @@ export interface PaymentFeeEstimate {
   estimatedTotal: string;
   tokenType: string;
 }
+
+// Account Deployment Types
+export type DeploymentStep = 'auth' | 'funding' | 'deployment' | 'verification' | 'complete';
+
+export type DeploymentStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+export interface DeploymentStepInfo {
+  id: DeploymentStep;
+  title: string;
+  description: string;
+  status: DeploymentStepStatus;
+  timestamp?: string;
+  transactionHash?: string;
+  error?: string;
+}
+
+export interface DeploymentProgress {
+  currentStep: DeploymentStep;
+  steps: DeploymentStepInfo[];
+  isComplete: boolean;
+  hasError: boolean;
+  startTime?: string;
+  endTime?: string;
+}
+
+export interface DeploymentConfig {
+  network: 'testnet' | 'mainnet';
+  fundingAmount: string;
+  autoDeploy: boolean;
+}
