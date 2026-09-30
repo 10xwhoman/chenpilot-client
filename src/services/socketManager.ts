@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { logger } from "../utils/logger";
 
 export interface SocketConfig {
   url: string;
@@ -63,13 +64,13 @@ export class SocketManager {
     this.socket = io(this.config.url, this.config.options);
 
     this.registerHandler('connect', () => {
-      console.log('Socket connected:', this.socket?.id);
+      logger.debug('Socket connected:', this.socket?.id);
       this.reconnectAttempts = 0;
       this.flushQueue();
     });
 
     this.registerHandler('disconnect', (reason) => {
-      console.log('Socket disconnected:', reason);
+      logger.debug('Socket disconnected:', reason);
     });
 
     this.registerHandler('connect_error', (error) => {
@@ -78,7 +79,7 @@ export class SocketManager {
     });
 
     this.registerHandler('reconnect', (attemptNumber) => {
-      console.log('Socket reconnected after', attemptNumber, 'attempts');
+      logger.debug('Socket reconnected after', attemptNumber, 'attempts');
       this.reconnectAttempts = 0;
       this.flushQueue();
     });

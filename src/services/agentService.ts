@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import { logger } from "../utils/logger";
 import { 
   AgentQueryRequest, 
   AgentQueryResponse,
@@ -29,7 +30,7 @@ class AgentService {
     if (agentConfig.enableLogging) {
       this.api.interceptors.request.use(
         (config) => {
-          console.log(`[AgentService] Making request to: ${config.method?.toUpperCase()} ${config.url}`);
+          logger.debug(`[AgentService] Making request to: ${config.method?.toUpperCase()} ${config.url}`);
           return config;
         },
         (error) => {
@@ -41,7 +42,7 @@ class AgentService {
       // Response interceptor for error handling
       this.api.interceptors.response.use(
         (response) => {
-          console.log(`[AgentService] Response received: ${response.status} ${response.config.url}`);
+          logger.debug(`[AgentService] Response received: ${response.status} ${response.config.url}`);
           return response;
         },
         (error) => {
@@ -167,11 +168,11 @@ class AgentService {
    */
   async queryAgent(request: AgentQueryRequest): Promise<AgentQueryResponse> {
     try {
-      console.log('[AgentService] Sending query:', request.query);
+      logger.debug('[AgentService] Sending query:', request.query);
       
       const response = await this.api.post('/query', request);
       
-      console.log('[AgentService] Query response:', response.data);
+      logger.debug('[AgentService] Query response:', response.data);
       
       // The experimental backend returns { result: ... } format
       // Ensure we return the proper AgentQueryResponse format
@@ -286,7 +287,7 @@ class AgentService {
   async initialize(): Promise<void> {
     try {
       await this.healthCheck();
-      console.log('[AgentService] Successfully initialized');
+      logger.debug('[AgentService] Successfully initialized');
     } catch (error) {
       console.warn('[AgentService] Failed to initialize, will retry on first use');
     }
