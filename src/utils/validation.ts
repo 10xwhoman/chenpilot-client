@@ -114,6 +114,7 @@ export const sendPaymentSchema = z.object({
     .max(PAYMENT_LIMITS.MAX_MEMO_LENGTH, VALIDATION_MESSAGES.MEMO_TOO_LONG)
     .optional(),
   memoType: z.enum(PAYMENT_LIMITS.MEMO_TYPES).optional(),
+  recipientContactId: z.string().optional(),
 }).refine((data) => {
   // If memo is provided, memoType must be specified (except for 'none')
   if (data.memo && data.memo.length > 0 && !data.memoType) {
@@ -184,6 +185,7 @@ export const validateSendPayment = (data: {
   tokenType: string;
   memo?: string;
   memoType?: string;
+  recipientContactId?: string;
 }): { isValid: boolean; errors: string[] } => {
   try {
     sendPaymentSchema.parse(data);
@@ -228,12 +230,14 @@ export const sanitizePaymentInput = (data: {
   tokenType: string;
   memo?: string;
   memoType?: string;
+  recipientContactId?: string;
 }): {
   recipientAddress: string;
   amount: string;
   tokenType: string;
   memo?: string;
   memoType?: string;
+  recipientContactId?: string;
 } => {
   return {
     recipientAddress: data.recipientAddress.trim(),
@@ -241,5 +245,6 @@ export const sanitizePaymentInput = (data: {
     tokenType: data.tokenType.toUpperCase(),
     memo: data.memo?.trim(),
     memoType: data.memoType?.toLowerCase(),
+    recipientContactId: data.recipientContactId?.trim(),
   };
 };

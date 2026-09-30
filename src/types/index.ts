@@ -87,9 +87,12 @@ export interface Contact {
   id: string;
   name: string;
   address: string;
-  tokenType: "XLM" | "USDC" | "USDT" | "BTC" | "ETH";
+  tokenType: "XLM" | "USDC" | "USDT" | "BTC" | "ETH" | "AQUA";
   createdAt: string;
   updatedAt: string;
+  avatar?: string;
+  isFavorite?: boolean;
+  lastUsed?: string;
 }
 
 export interface CreateContactRequest {
@@ -547,12 +550,40 @@ export interface SendPaymentRequest {
   tokenType: 'XLM' | 'USDC' | 'USDT' | 'BTC' | 'ETH' | 'AQUA';
   memo?: string;
   memoType?: 'none' | 'text' | 'id' | 'hash';
+  recipientContactId?: string; // Optional reference to selected contact
 }
 
 export interface SendPaymentValidationResult {
   isValid: boolean;
   errors: string[];
   data?: SendPaymentRequest;
+}
+
+// Contact Selection Types
+export interface ContactSelection {
+  id: string;
+  name: string;
+  address: string;
+  tokenType: 'XLM' | 'USDC' | 'USDT' | 'BTC' | 'ETH' | 'AQUA';
+  avatar?: string;
+  isFavorite?: boolean;
+  lastUsed?: string;
+}
+
+export interface ContactPickerState {
+  isOpen: boolean;
+  selectedContact: ContactSelection | null;
+  searchTerm: string;
+  filteredContacts: ContactSelection[];
+}
+
+export interface ContactPickerProps {
+  contacts: Contact[];
+  onSelect: (contact: ContactSelection) => void;
+  onClose: () => void;
+  isOpen: boolean;
+  isLoading?: boolean;
+  tokenType?: 'XLM' | 'USDC' | 'USDT' | 'BTC' | 'ETH' | 'AQUA';
 }
 
 export interface PaymentLimits {
