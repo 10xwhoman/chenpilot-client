@@ -14,11 +14,12 @@ export const store = configureStore({
     contacts: contactsSlice,
     chat: chatSlice,
     ui: uiSlice,
+    presence: presenceSlice,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({
       serializableCheck: {
-        ignoredActions: ['persist/PERSIST'],
+        ignoredActions: ["persist/PERSIST"],
       },
     }),
 });

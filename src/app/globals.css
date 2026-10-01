@@ -25,3 +25,30 @@ body {
   color: var(--foreground);
   font-family: "Manrope", system-ui, sans-serif;
 }
+
+/* RTL Support */
+html.rtl {
+  direction: rtl;
+  text-align: right;
+}
+
+html.rtl body {
+  direction: rtl;
+}
+
+/* RTL utility classes */
+html.rtl .ltr-only {
+  display: none;
+}
+
+html:not(.rtl) .rtl-only {
+  display: none;
+}
+
+/* RTL spacing utilities */
+html.rtl [class*="ml-"],
+html.rtl [class*="mr-"],
+html.rtl [class*="pl-"],
+html.rtl [class*="pr-"] {
+  /* Tailwind will handle through CSS */
+}
