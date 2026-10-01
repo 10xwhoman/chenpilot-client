@@ -202,24 +202,49 @@ const authSlice = createSlice({
       state.isSessionWarningActive = action.payload;
     },
     initializeAuth: (state) => {
-      // Always set mock authenticated user for development without backend
-      const mockUser: User = {
-        id: "mock-user-id",
-        email: "mock@example.com",
-        name: "Mock User",
-        address: "0x1234567890abcdef",
-        publicKey: "0xabcdef1234567890",
-        isDeployed: true,
-        isFunded: true,
-        tokenType: "STRK",
-        authProvider: "email",
-        isEmailVerified: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      state.user = mockUser;
-      state.token = "mock-jwt-token";
-      state.isAuthenticated = true;
+      // Restore persisted auth state from localStorage.
+      // If no real token exists we leave the state as unauthenticated so the
+      // app routes the user to the login page — mock data is only used when
+      // the env variable NEXT_PUBLIC_USE_MOCK_AUTH is explicitly set to 'true'.
+      if (typeof window === 'undefined') return;
+
+      const useMock = process.env.NEXT_PUBLIC_USE_MOCK_AUTH === 'true';
+
+      const storedToken = localStorage.getItem('auth_token');
+      const storedUser  = localStorage.getItem('user_data');
+
+      if (storedToken && storedUser) {
+        // Real credentials from a previous session.
+        try {
+          state.token           = storedToken;
+          state.user            = JSON.parse(storedUser) as User;
+          state.isAuthenticated = true;
+        } catch {
+          // Corrupt data — fall through to the unauthenticated default.
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('user_data');
+        }
+      } else if (useMock) {
+        // Development convenience: no backend needed when the flag is set.
+        const mockUser: User = {
+          id: 'mock-user-id',
+          email: 'mock@example.com',
+          name: 'Mock User',
+          address: '0x1234567890abcdef',
+          publicKey: '0xabcdef1234567890',
+          isDeployed: true,
+          isFunded: true,
+          tokenType: 'STRK',
+          authProvider: 'email',
+          isEmailVerified: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        state.user            = mockUser;
+        state.token           = 'mock-jwt-token';
+        state.isAuthenticated = true;
+      }
+      // else: leave state.isAuthenticated = false → app will redirect to /auth/login
     },
   },
   extraReducers: (builder) => {

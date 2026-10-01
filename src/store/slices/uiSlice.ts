@@ -1,5 +1,7 @@
 import { createSlice, PayloadAction, createAction } from "@reduxjs/toolkit";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 export interface ThemeState {
   mode: "light" | "dark";
   language: "en" | "ar" | "es" | "fr";
@@ -31,6 +33,8 @@ export const initializeUI = createAction("ui/initialize", () => {
   };
 });
 
+// ─── Slice ────────────────────────────────────────────────────────────────────
+
 export const uiSlice = createSlice({
   name: "ui",
   initialState,
@@ -56,6 +60,20 @@ export const uiSlice = createSlice({
         localStorage.setItem("language", state.language);
       }
     },
+    /**
+     * Called by the retry interceptor before each retry attempt.
+     * Overwrites any previous status with the latest attempt info.
+     */
+    setRetryStatus: (state, action: PayloadAction<RetryStatus>) => {
+      state.retryStatus = action.payload;
+    },
+    /**
+     * Called by the retry interceptor when the request finally succeeds,
+     * permanently fails, or is not eligible for retry.
+     */
+    clearRetryStatus: (state) => {
+      state.retryStatus = null;
+    },
   },
   extraReducers: (builder) => {
     builder.addCase(initializeUI, (state, action) => {
@@ -65,5 +83,5 @@ export const uiSlice = createSlice({
   },
 });
 
-export const { toggleTheme, setTheme, setLanguage } = uiSlice.actions;
+export const { toggleTheme, setTheme, setRetryStatus, clearRetryStatus } = uiSlice.actions;
 export default uiSlice.reducer;
