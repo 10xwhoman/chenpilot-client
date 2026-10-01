@@ -87,9 +87,12 @@ export interface Contact {
   id: string;
   name: string;
   address: string;
-  tokenType: "XLM" | "USDC" | "USDT" | "BTC" | "ETH";
+  tokenType: "XLM" | "USDC" | "USDT" | "BTC" | "ETH" | "AQUA";
   createdAt: string;
   updatedAt: string;
+  avatar?: string;
+  isFavorite?: boolean;
+  lastUsed?: string;
 }
 
 export interface CreateContactRequest {
@@ -573,4 +576,90 @@ export interface AuditLogStats {
   errorsToday: number;
   warningsToday: number;
   recentActivity: AuditLogEntry[];
+}
+
+// Send Payment Types
+export interface SendPaymentRequest {
+  recipientAddress: string;
+  amount: string;
+  tokenType: 'XLM' | 'USDC' | 'USDT' | 'BTC' | 'ETH' | 'AQUA';
+  memo?: string;
+  memoType?: 'none' | 'text' | 'id' | 'hash';
+  recipientContactId?: string; // Optional reference to selected contact
+}
+
+export interface SendPaymentValidationResult {
+  isValid: boolean;
+  errors: string[];
+  data?: SendPaymentRequest;
+}
+
+// Contact Selection Types
+export interface ContactSelection {
+  id: string;
+  name: string;
+  address: string;
+  tokenType: 'XLM' | 'USDC' | 'USDT' | 'BTC' | 'ETH' | 'AQUA';
+  avatar?: string;
+  isFavorite?: boolean;
+  lastUsed?: string;
+}
+
+export interface ContactPickerState {
+  isOpen: boolean;
+  selectedContact: ContactSelection | null;
+  searchTerm: string;
+  filteredContacts: ContactSelection[];
+}
+
+export interface ContactPickerProps {
+  contacts: Contact[];
+  onSelect: (contact: ContactSelection) => void;
+  onClose: () => void;
+  isOpen: boolean;
+  isLoading?: boolean;
+  tokenType?: 'XLM' | 'USDC' | 'USDT' | 'BTC' | 'ETH' | 'AQUA';
+}
+
+export interface PaymentLimits {
+  minAmount: number;
+  maxAmount: number;
+  maxMemoLength: number;
+  supportedTokens: TokenType[];
+}
+
+export interface PaymentFeeEstimate {
+  baseFee: string;
+  estimatedTotal: string;
+  tokenType: string;
+}
+
+// Account Deployment Types
+export type DeploymentStep = 'auth' | 'funding' | 'deployment' | 'verification' | 'complete';
+
+export type DeploymentStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+export interface DeploymentStepInfo {
+  id: DeploymentStep;
+  title: string;
+  description: string;
+  status: DeploymentStepStatus;
+  timestamp?: string;
+  transactionHash?: string;
+  error?: string;
+}
+
+export interface DeploymentProgress {
+  currentStep: DeploymentStep;
+  steps: DeploymentStepInfo[];
+  isComplete: boolean;
+  hasError: boolean;
+  startTime?: string;
+  endTime?: string;
+}
+
+export interface DeploymentConfig {
+  network: 'testnet' | 'mainnet';
+  fundingAmount: string;
+  autoDeploy: boolean;
 }

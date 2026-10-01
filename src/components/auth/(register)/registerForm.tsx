@@ -8,6 +8,7 @@ import { registerSchema } from "@/utils/validation";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { GoogleSignInButton } from "@/components/auth/GoogleSignIn";
+import { PasswordStrengthMeter } from "@/components/auth/(register)/passwordStrengthMeter";
 import { Eye, EyeOff, ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -27,10 +28,13 @@ export function RegisterForm() {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
   });
+
+  const passwordValue = watch("password") ?? "";
 
   const onSubmit = async (data: RegisterFormData) => {
     try {
@@ -138,6 +142,8 @@ export function RegisterForm() {
               {errors.password.message}
             </p>
           )}
+
+          <PasswordStrengthMeter password={passwordValue} />
         </div>
 
         <div className="flex items-start gap-2 text-sm pt-2">

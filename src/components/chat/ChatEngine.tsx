@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { ChatMessage } from "@/types";
+import { usePathname, useRouter } from "next/navigation";
 
 // ─── Speech Recognition ambient types (used by the old transcription path) ────
 
@@ -87,6 +88,8 @@ function formatSeconds(secs: number): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export const ChatEngine: React.FC = () => {
+  const router = useRouter();
+  const pathname = usePathname();
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
   const {
@@ -162,6 +165,12 @@ export const ChatEngine: React.FC = () => {
   }, [dispatch, currentConversation, messages.length]);
 
   // Cleanup legacy recorder on unmount
+  useEffect(() => {
+    if (currentConversation?.id && pathname === "/chat") {
+      router.replace(`/chat/${encodeURIComponent(currentConversation.id)}`, { scroll: false });
+    }
+  }, [currentConversation?.id, pathname, router]);
+
   useEffect(() => {
     return () => {
       if (legacyTimerRef.current) clearInterval(legacyTimerRef.current);

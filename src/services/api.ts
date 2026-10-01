@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
+import { logger } from "../utils/logger";
 import { 
   RegisterRequest, 
   LoginRequest, 
@@ -14,7 +15,7 @@ import {
   ApiResponse,
   ChatMessage,
   Conversation,
-  PromptVersionRecord
+  PromptVersionRecord,
   LiquidityPool,
   LiquidityStats,
   LiquidityRequest,
@@ -486,7 +487,7 @@ class ApiService {
     // First try the experimental agent service
     try {
       if (agentService.isAgentConnected()) {
-        console.log('[ApiService] Using experimental agent service');
+        logger.debug('[ApiService] Using experimental agent service');
         return await agentService.queryAgent(data);
       }
     } catch (error) {
@@ -499,7 +500,7 @@ class ApiService {
         throw new Error('Query cannot be empty');
       }
 
-      console.log('[ApiService] Querying backend /query endpoint');
+      logger.debug('[ApiService] Querying backend /query endpoint');
       const response = await this.api.post('/query', data);
       
       // The system returns response.data directly or wrapped in { result: ... }
@@ -661,6 +662,9 @@ class ApiService {
 
   async activatePromptVersion(id: string): Promise<ApiResponse<PromptVersionRecord> | PromptVersionRecord> {
     const response = await this.api.patch<ApiResponse<PromptVersionRecord> | PromptVersionRecord>(`/versions/${id}/activate`);
+    return response.data;
+  }
+
   // Liquidity Pool endpoints
   async getLiquidityStats(request?: LiquidityRequest): Promise<ApiResponse<LiquidityStats>> {
     const response = await this.api.post<ApiResponse<LiquidityStats>>('/liquidity', request || {});

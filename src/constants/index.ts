@@ -171,6 +171,20 @@ export const VALIDATION_MESSAGES = {
   NAME_TOO_SHORT: 'Name must be at least 2 characters',
   NAME_TOO_LONG: 'Name must be less than 50 characters',
   MESSAGE_TOO_LONG: 'Message is too long (max 1000 characters)',
+  // Payment validation messages
+  RECIPIENT_ADDRESS_REQUIRED: 'Recipient address is required',
+  RECIPIENT_ADDRESS_INVALID: 'Please enter a valid Stellar address (starts with G followed by 55 alphanumeric characters)',
+  AMOUNT_REQUIRED: 'Amount is required',
+  AMOUNT_INVALID_FORMAT: 'Please enter a valid amount (up to 7 decimal places)',
+  AMOUNT_MUST_BE_POSITIVE: 'Amount must be greater than 0',
+  AMOUNT_EXCEEDS_MAX: 'Amount cannot exceed 1,000,000',
+  AMOUNT_EXCEEDS_MIN: 'Amount must be at least 0.0000001',
+  TOKEN_TYPE_REQUIRED: 'Please select a token type',
+  MEMO_TOO_LONG: 'Memo cannot exceed 28 characters',
+  MEMO_TYPE_REQUIRED: 'Memo type is required when memo is provided',
+  MEMO_INVALID_FORMAT: 'Invalid memo format for the selected memo type',
+  MEMO_ID_INVALID: 'Memo ID must contain only digits',
+  MEMO_HASH_INVALID: 'Memo hash must be a 64-character hexadecimal string',
 } as const;
 
 // Error Messages
@@ -182,6 +196,26 @@ export const ERROR_MESSAGES = {
   SERVER_ERROR: 'Server error. Please try again later.',
   TIMEOUT: 'Request timed out. Please try again.',
   UNKNOWN_ERROR: 'An unknown error occurred.',
+} as const;
+
+// Payment Limits and Configuration
+export const PAYMENT_LIMITS = {
+  MIN_AMOUNT: 0.0000001,
+  MAX_AMOUNT: 1000000,
+  MAX_MEMO_LENGTH: 28,
+  MAX_DECIMAL_PLACES: 7,
+  SUPPORTED_TOKENS: ['XLM', 'USDC', 'USDT', 'BTC', 'ETH', 'AQUA'] as const,
+  MEMO_TYPES: ['none', 'text', 'id', 'hash'] as const,
+} as const;
+
+// Security Validation Constants
+export const SECURITY_VALIDATION = {
+  STELLAR_ADDRESS_REGEX: /^G[A-Z0-9]{55}$/,
+  MEMO_ID_REGEX: /^\d+$/,
+  MEMO_HASH_REGEX: /^[a-fA-F0-9]{64}$/,
+  AMOUNT_REGEX: /^\d+(\.\d{1,7})?$/,
+  MAX_RECIPIENT_ADDRESSES_PER_TRANSACTION: 1,
+  RATE_LIMIT_PER_MINUTE: 10,
 } as const;
 
 // Success Messages
@@ -260,36 +294,63 @@ export const Z_INDEX = {
   TOAST: 1080,
 } as const;
 
-// Voice Message
-export const VOICE_MESSAGE = {
-  /** Maximum audio blob size accepted before sending (5 MB) */
-  MAX_SIZE_BYTES: 5 * 1024 * 1024,
-  /** Maximum recording duration in seconds (2 minutes) */
-  MAX_DURATION_SECONDS: 120,
-  /** Preferred MIME types in priority order */
-  PREFERRED_MIME_TYPES: [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/ogg;codecs=opus',
-    'audio/ogg',
-    'audio/mp4',
-  ],
-  /** Storage limit warning threshold: warn if voice messages exceed this in localStorage (1 MB) */
-  STORAGE_WARN_BYTES: 1 * 1024 * 1024,
+// Account Deployment Constants
+export const DEPLOYMENT_STEPS = {
+  AUTH: {
+    id: 'auth' as const,
+    title: 'Authentication',
+    description: 'Securely authenticate your account',
+    icon: 'Shield',
+  },
+  FUNDING: {
+    id: 'funding' as const,
+    title: 'Account Funding',
+    description: 'Receive initial funding for your account',
+    icon: 'Coins',
+  },
+  DEPLOYMENT: {
+    id: 'deployment' as const,
+    title: 'Account Deployment',
+    description: 'Deploy your smart contract account',
+    icon: 'Rocket',
+  },
+  VERIFICATION: {
+    id: 'verification' as const,
+    title: 'Verification',
+    description: 'Verify account deployment and functionality',
+    icon: 'CheckCircle',
+  },
+  COMPLETE: {
+    id: 'complete' as const,
+    title: 'Complete',
+    description: 'Your account is ready for use',
+    icon: 'Sparkles',
+  },
 } as const;
 
-// Retry / backoff configuration
-export const RETRY_CONFIG = {
-  /** Maximum number of retry attempts before giving up */
-  MAX_ATTEMPTS: 3,
-  /** Base delay in ms for the first retry (doubles each attempt) */
-  BASE_DELAY_MS: 500,
-  /** Absolute cap on any single backoff delay (ms) */
-  MAX_DELAY_MS: 10_000,
-  /** Maximum random jitter added to each delay (ms) */
-  JITTER_MS: 300,
-  /** HTTP status codes that are safe to retry */
-  RETRYABLE_STATUS_CODES: [408, 429, 500, 502, 503, 504] as const,
-  /** HTTP methods treated as idempotent and therefore safe to retry */
-  IDEMPOTENT_METHODS: ['get', 'head', 'options', 'put', 'delete'] as const,
+export const DEPLOYMENT_STATUS = {
+  PENDING: 'pending' as const,
+  IN_PROGRESS: 'in_progress' as const,
+  COMPLETED: 'completed' as const,
+  FAILED: 'failed' as const,
+} as const;
+
+export const DEPLOYMENT_MESSAGES = {
+  AUTH_SUCCESS: 'Authentication successful',
+  FUNDING_SUCCESS: 'Account funded successfully',
+  DEPLOYMENT_SUCCESS: 'Account deployed successfully',
+  VERIFICATION_SUCCESS: 'Account verified successfully',
+  AUTH_FAILED: 'Authentication failed',
+  FUNDING_FAILED: 'Funding failed',
+  DEPLOYMENT_FAILED: 'Deployment failed',
+  VERIFICATION_FAILED: 'Verification failed',
+  NETWORK_ERROR: 'Network error, please try again',
+  TIMEOUT_ERROR: 'Operation timed out',
+} as const;
+
+export const DEPLOYMENT_CONFIG = {
+  DEFAULT_FUNDING_AMOUNT: '2', // XLM
+  MAX_RETRIES: 3,
+  RETRY_DELAY: 2000, // ms
+  TIMEOUT: 30000, // ms
 } as const;
