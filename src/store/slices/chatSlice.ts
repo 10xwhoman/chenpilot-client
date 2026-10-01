@@ -4,6 +4,15 @@ import { ChatMessage, AgentQueryRequest, Conversation } from "@/types";
 import { AgentQueryResponse } from "@/types/agent";
 import apiService from "@/services/api";
 
+// ─── Voice message payload ────────────────────────────────────────────────────
+export interface SendVoiceMessagePayload {
+  audioUrl: string;
+  duration: number;
+  mimeType: string;
+  transcript: string;
+  sizeBytes: number;
+}
+
 interface ChatState {
   messages: ChatMessage[];
   conversations: Conversation[];
@@ -173,6 +182,97 @@ export const sendMessage = createAsyncThunk(
     }
   },
 );
+
+// ─── sendVoiceMessage thunk ───────────────────────────────────────────────────
+
+export const sendVoiceMessage = createAsyncThunk(
+  'chat/sendVoiceMessage',
+  async (payload: SendVoiceMessagePayload, { getState, rejectWithValue }) => {
+    const state = getState() as any;
+
+    if (state.chat.isLoading || state.chat.isTyping) {
+      return rejectWithValue('A message is already in progress');
+    }
+
+    const userId = state.auth.user?.id;
+    if (!userId) {
+      return rejectWithValue('User not authenticated');
+    }
+
+    // Storage guard — warn if total voice data in history is getting large
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('chat_history') || '';
+      if (stored.length > VOICE_MESSAGE.STORAGE_WARN_BYTES) {
+        console.warn('[sendVoiceMessage] chat_history localStorage is large; consider pruning old voice messages');
+      }
+    }
+
+    let conversation = state.chat.currentConversation;
+    if (!conversation) {
+      conversation = {
+        id: `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        title: 'New Chat',
+        description: 'A new conversation',
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        userId,
+        messageCount: 0,
+      };
+    }
+
+    // Display text is the transcript (or a placeholder)
+    const displayText = payload.transcript
+      ? `🎙 *Voice message* — "${payload.transcript}"`
+      : '🎙 *Voice message*';
+
+    const voiceMessage: ChatMessage = {
+      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      type: 'user',
+      messageType: 'voice',
+      content: displayText,
+      timestamp: new Date().toISOString(),
+      voice: {
+        audioUrl: payload.audioUrl,
+        duration: payload.duration,
+        mimeType: payload.mimeType,
+        transcript: payload.transcript,
+        sizeBytes: payload.sizeBytes,
+      },
+    };
+
+    // If there is a transcript, forward it to the agent as a regular text query
+    let agentMessage: ChatMessage | null = null;
+    if (payload.transcript.trim()) {
+      try {
+        const response = await apiService.queryAgent({ userId, query: payload.transcript });
+        let content = response.result.data;
+        try {
+          const parsed = JSON.parse(content);
+          if (parsed && typeof parsed === 'object') content = parsed;
+        } catch { /* not JSON */ }
+
+        agentMessage = {
+          id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'agent',
+          content,
+          timestamp: new Date().toISOString(),
+          metadata: {
+            success: response.result.success,
+            error: response.result.error,
+            executionTrace: response.result.executionTrace,
+          },
+        };
+      } catch {
+        // Non-fatal — voice message is still stored even if agent call fails
+      }
+    }
+
+    return { conversation, voiceMessage, agentMessage };
+  },
+);
+
+// ─── Slice ────────────────────────────────────────────────────────────────────
 
 const chatSlice = createSlice({
   name: "chat",
@@ -610,6 +710,35 @@ const chatSlice = createSlice({
           },
         };
         state.messages.push(errorMessage);
+      })
+
+      // ── sendVoiceMessage ───────────────────────────────────────────────────
+      .addCase(sendVoiceMessage.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(sendVoiceMessage.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.currentConversation = action.payload.conversation;
+
+        state.messages.push(action.payload.voiceMessage);
+
+        if (action.payload.agentMessage) {
+          state.messages.push(action.payload.agentMessage);
+        }
+
+        if (state.currentConversation) {
+          state.chatHistory[state.currentConversation.id] = [...state.messages];
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('chat_history', JSON.stringify(state.chatHistory));
+          }
+        }
+
+        state.error = null;
+      })
+      .addCase(sendVoiceMessage.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
       });
   },
 });

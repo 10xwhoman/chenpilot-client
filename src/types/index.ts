@@ -189,11 +189,36 @@ export interface ExecutionStep {
 }
 
 // Chat and Message Types
+
+/** Discriminates between plain text and voice messages */
+export type MessageType = "text" | "voice";
+
 export interface ChatMessage {
   id: string;
   type: "user" | "agent" | "system";
+  /** 'text' (default) or 'voice' */
+  messageType?: MessageType;
   content: string;
   timestamp: string;
+  /** ID of the message this is a reply to (undefined for root messages) */
+  parentId?: string;
+  /** Root message ID of the thread this message belongs to */
+  threadId?: string;
+  /** Number of direct replies to this message (only tracked on root messages) */
+  replyCount?: number;
+  /** Voice message fields — only present when messageType === 'voice' */
+  voice?: {
+    /** Base64 data URL (e.g. "data:audio/webm;base64,...") stored for offline playback */
+    audioUrl: string;
+    /** Recording duration in seconds */
+    duration: number;
+    /** MIME type of the recorded audio (e.g. "audio/webm;codecs=opus") */
+    mimeType: string;
+    /** Auto-generated transcript via Web Speech API (may be empty string) */
+    transcript: string;
+    /** Approximate size of the audio data in bytes (before base64 encoding) */
+    sizeBytes: number;
+  };
   metadata?: {
     transactionHash?: string;
     amount?: string;
@@ -208,6 +233,16 @@ export interface ChatMessage {
     executionTrace?: ExecutionTrace;
     rawData?: any;
   };
+}
+
+/** Represents an open thread panel for a given root message */
+export interface ThreadState {
+  /** ID of the root message whose thread is open */
+  rootMessageId: string;
+  /** Flat list of reply messages in the thread */
+  replies: ChatMessage[];
+  /** Whether the thread panel is typing an agent response */
+  isTyping: boolean;
 }
 
 export interface Conversation {

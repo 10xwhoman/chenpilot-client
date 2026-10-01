@@ -12,9 +12,10 @@ import ExecutionTrace from "./ExecutionTrace";
 interface AgentMessageProps {
   message: ChatMessage;
   onCopy?: (text: string) => void;
+  onReply?: (messageId: string) => void;
 }
 
-export default function AgentMessage({ message, onCopy }: AgentMessageProps) {
+export default function AgentMessage({ message, onCopy, onReply }: AgentMessageProps) {
   const [copied, setCopied] = useState(false);
 
   // Handle both string and object content
@@ -331,16 +332,16 @@ export default function AgentMessage({ message, onCopy }: AgentMessageProps) {
       )}
 
       <button
-        onClick={handleCopy}
-        className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 text-gray-400 hover:text-white"
-        title="Copy message"
+        onClick={() => onReply(message.id)}
+        className="mt-1.5 flex items-center space-x-1 text-xs text-purple-400 hover:text-purple-300 transition-colors"
+        aria-label={`View ${message.replyCount} ${message.replyCount === 1 ? 'reply' : 'replies'}`}
       >
-        {copied ? (
-          <Check className="h-4 w-4 text-green-400" />
-        ) : (
-          <Copy className="h-4 w-4" />
-        )}
+        <MessageSquare className="h-3.5 w-3.5" />
+        <span>
+          {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
+        </span>
       </button>
+    )}
     </div>
   );
 }
