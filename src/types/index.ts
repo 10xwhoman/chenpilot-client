@@ -200,6 +200,7 @@ export interface ChatMessage {
   messageType?: MessageType;
   content: string;
   timestamp: string;
+  serverTimestamp?: number | string;
   /** ID of the message this is a reply to (undefined for root messages) */
   parentId?: string;
   /** Root message ID of the thread this message belongs to */
@@ -232,6 +233,10 @@ export interface ChatMessage {
     requiresConfirmation?: boolean;
     executionTrace?: ExecutionTrace;
     rawData?: any;
+    serverTimestamp?: number | string;
+    clientTimestamp?: number | string;
+    optimisticId?: string;
+    tempId?: string;
   };
 }
 

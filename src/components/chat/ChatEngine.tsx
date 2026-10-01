@@ -457,7 +457,7 @@ export const ChatEngine: React.FC = () => {
             }
           }}
           placeholder={isRecording ? "Listening..." : "Ask ChenPilot..."}
-          disabled={isChatLoading || isTyping}
+          disabled={isRecording}
           className="w-full bg-transparent border-none text-white placeholder:text-gray-500 focus:outline-none text-lg mb-4"
         />
 
@@ -505,7 +505,7 @@ export const ChatEngine: React.FC = () => {
 
           <button
             type="button"
-            onClick={() =>
+onClick={() =>
               inputValue.trim() ? handleSendMessage() : toggleVoiceRecording()
             }
             disabled={isChatLoading || isTyping}

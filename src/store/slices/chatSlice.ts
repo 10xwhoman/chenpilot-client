@@ -98,17 +98,71 @@ export const getOrCreateActiveConversation = createAsyncThunk(
   },
 );
 
-export const sendMessage = createAsyncThunk(
-  "chat/sendMessage",
-  async (query: string, { getState, rejectWithValue }) => {
-    const state = getState() as any;
+// Helper functions for message ordering & timestamps (#86)
+export const getMessageTimestamp = (message: ChatMessage): number => {
+  // 1. Root serverTimestamp (number or string)
+  if (message.serverTimestamp !== undefined && message.serverTimestamp !== null) {
+    const ts = typeof message.serverTimestamp === 'number'
+      ? message.serverTimestamp
+      : new Date(message.serverTimestamp).getTime();
+    if (!isNaN(ts)) return ts;
+  }
 
-    // Concurrency guard: prevent multiple simultaneous queries
-    if (state.chat.isLoading || state.chat.isTyping) {
-      return rejectWithValue("A query is already in progress");
+  // 2. metadata.serverTimestamp (number or string)
+  if (message.metadata?.serverTimestamp !== undefined && message.metadata?.serverTimestamp !== null) {
+    const ts = typeof message.metadata.serverTimestamp === 'number'
+      ? message.metadata.serverTimestamp
+      : new Date(message.metadata.serverTimestamp).getTime();
+    if (!isNaN(ts)) return ts;
+  }
+
+  // 3. metadata.clientTimestamp (number or string)
+  if (message.metadata?.clientTimestamp !== undefined && message.metadata?.clientTimestamp !== null) {
+    const ts = typeof message.metadata.clientTimestamp === 'number'
+      ? message.metadata.clientTimestamp
+      : new Date(message.metadata.clientTimestamp).getTime();
+    if (!isNaN(ts)) return ts;
+  }
+
+  // 4. Root timestamp (ISO string or unix ms or numeric string)
+  if (message.timestamp) {
+    const num = Number(message.timestamp);
+    if (!isNaN(num) && num > 1000000000) {
+      return num;
     }
+    const ts = new Date(message.timestamp).getTime();
+    if (!isNaN(ts)) return ts;
+  }
+
+  // 5. Fallback to 0
+  return 0;
+};
+
+export const sortMessagesChronologically = (messages: ChatMessage[]): ChatMessage[] => {
+  return [...messages].sort((a, b) => {
+    const timeA = getMessageTimestamp(a);
+    const timeB = getMessageTimestamp(b);
+    if (timeA !== timeB) {
+      return timeA - timeB;
+    }
+    // Stable tie-breaker: user message comes before agent/system message for same timestamp
+    if (a.type === 'user' && b.type !== 'user') return -1;
+    if (a.type !== 'user' && b.type === 'user') return 1;
+    return a.id.localeCompare(b.id);
+  });
+};
+
+export type SendMessageArg = string | { query: string; tempId?: string; clientTimestamp?: number };
+
+export const sendMessage = createAsyncThunk(
+  'chat/sendMessage',
+  async (arg: SendMessageArg, { getState, rejectWithValue, requestId }) => {
+    const query = typeof arg === 'string' ? arg : arg.query;
+    const tempId = typeof arg === 'object' && arg.tempId ? arg.tempId : `msg_optimistic_${requestId}`;
+    const clientTimestamp = typeof arg === 'object' && arg.clientTimestamp ? arg.clientTimestamp : Date.now();
 
     try {
+      const state = getState() as any;
       const userId = state.auth.user?.id;
       const currentConversation = state.chat.currentConversation;
 
@@ -171,27 +225,52 @@ export const sendMessage = createAsyncThunk(
         }
       }
 
-      // Generate server timestamp for agent response (slightly after user message)
-      const agentTimestamp = new Date(
-        new Date(serverTimestamp).getTime() + 1,
-      ).toISOString();
+      // Extract server timestamp from response if available
+      const rawServerTimestamp = (response.result as any).serverTimestamp 
+        || (response.result as any).timestamp 
+        || (response as any).serverTimestamp 
+        || (response as any).timestamp 
+        || Date.now();
+      
+      const serverTimestamp = typeof rawServerTimestamp === 'string' && isNaN(Number(rawServerTimestamp))
+        ? new Date(rawServerTimestamp).getTime()
+        : Number(rawServerTimestamp);
+
+      // Create user message representation with updated serverTimestamp and success status
+      const userMessage: ChatMessage = {
+        id: tempId,
+        type: 'user',
+        content: query,
+        timestamp: new Date(serverTimestamp).toISOString(),
+        serverTimestamp: serverTimestamp,
+        metadata: {
+          status: 'success',
+          clientTimestamp: clientTimestamp,
+          serverTimestamp: serverTimestamp,
+          optimisticId: tempId,
+          tempId: tempId,
+        }
+      };
 
       // Create agent message with execution trace if available
       const agentMessage: ChatMessage = {
         id: `msg_agent_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: "agent",
         content: content,
-        timestamp: agentTimestamp,
+        timestamp: new Date(serverTimestamp).toISOString(),
+        serverTimestamp: serverTimestamp,
         metadata: {
+          status: 'success',
           success: response.result.success,
           error: response.result.error,
           executionTrace: response.result.executionTrace,
+serverTimestamp: serverTimestamp,
           // Store raw structured data in metadata if it was JSON
           rawData: typeof content !== "string" ? content : undefined,
-        },
+        }
       };
 
-      return { response, conversation, userMessage, agentMessage };
+      return { response, conversation, userMessage, agentMessage, tempId };
     } catch (error: any) {
       const errorMsg =
         error.response?.data?.message ||
@@ -302,7 +381,7 @@ const chatSlice = createSlice({
     },
     addMessage: (state, action: PayloadAction<ChatMessage>) => {
       state.messages.push(action.payload);
-      state.messages = sortMessagesByTimestamp(state.messages);
+      state.messages = sortMessagesChronologically(state.messages);
     },
     addUserMessage: (state, action: PayloadAction<string>) => {
       const userMessage: ChatMessage = {
@@ -310,8 +389,10 @@ const chatSlice = createSlice({
         type: "user",
         content: action.payload,
         timestamp: new Date().toISOString(),
+        serverTimestamp: Date.now(),
       };
       state.messages.push(userMessage);
+      state.messages = sortMessagesChronologically(state.messages);
     },
     addSystemMessage: (
       state,
@@ -322,15 +403,17 @@ const chatSlice = createSlice({
         type: "system",
         content: action.payload.content,
         timestamp: new Date().toISOString(),
+        serverTimestamp: Date.now(),
         metadata: action.payload.metadata,
       };
       state.messages.push(systemMessage);
+      state.messages = sortMessagesChronologically(state.messages);
     },
     clearMessages: (state) => {
       state.messages = [];
     },
     setMessages: (state, action: PayloadAction<ChatMessage[]>) => {
-      state.messages = sortMessagesByTimestamp(action.payload);
+      state.messages = sortMessagesChronologically(action.payload);
     },
     setConversations: (state, action: PayloadAction<Conversation[]>) => {
       state.conversations = action.payload;
@@ -352,12 +435,11 @@ const chatSlice = createSlice({
         (msg) => msg.id === action.payload.id,
       );
       if (index !== -1) {
-        state.messages[index] = {
+state.messages[index] = {
           ...state.messages[index],
           ...action.payload.updates,
         };
-        // Re-sort after update in case timestamp changed
-        state.messages = sortMessagesByTimestamp(state.messages);
+        state.messages = sortMessagesChronologically(state.messages);
       }
     },
     removeMessage: (state, action: PayloadAction<string>) => {
@@ -393,6 +475,10 @@ const chatSlice = createSlice({
     },
     loadChatHistory: (state, action: PayloadAction<string>) => {
       const conversationId = action.payload;
+      const conversation = state.conversations.find((item) => item.id === conversationId);
+      state.currentConversation = conversation ?? state.currentConversation;
+      const loadedMessages = state.chatHistory[conversationId] ?? conversation?.messages ?? [];
+      state.messages = sortMessagesChronologically(loadedMessages);
       if (state.chatHistory[conversationId]) {
         state.messages = sortMessagesByTimestamp(
           state.chatHistory[conversationId],
@@ -657,10 +743,39 @@ const chatSlice = createSlice({
       })
 
       // Send Message
-      .addCase(sendMessage.pending, (state) => {
+      .addCase(sendMessage.pending, (state, action) => {
         state.isLoading = true;
         state.isTyping = true;
         state.error = null;
+
+        const query = typeof action.meta.arg === 'string' ? action.meta.arg : action.meta.arg.query;
+        const tempId = typeof action.meta.arg === 'object' && action.meta.arg.tempId
+          ? action.meta.arg.tempId
+          : `msg_optimistic_${action.meta.requestId}`;
+        const clientTimestamp = typeof action.meta.arg === 'object' && action.meta.arg.clientTimestamp
+          ? action.meta.arg.clientTimestamp
+          : Date.now();
+
+        // Check if optimistic message already exists
+        const exists = state.messages.some(
+          m => m.id === tempId || m.metadata?.optimisticId === tempId || m.metadata?.tempId === tempId
+        );
+        if (!exists) {
+          const optimisticUserMessage: ChatMessage = {
+            id: tempId,
+            type: 'user',
+            content: query,
+            timestamp: new Date(clientTimestamp).toISOString(),
+            metadata: {
+              status: 'pending',
+              clientTimestamp: clientTimestamp,
+              optimisticId: tempId,
+              tempId: tempId,
+            },
+          };
+          state.messages.push(optimisticUserMessage);
+          state.messages = sortMessagesChronologically(state.messages);
+        }
       })
       .addCase(sendMessage.fulfilled, (state, action) => {
         state.isLoading = false;
@@ -699,17 +814,37 @@ const chatSlice = createSlice({
           }
         }
 
-        // Add both user and agent messages from the payload
-        if (action.payload.userMessage) {
-          state.messages.push(action.payload.userMessage);
+        const { userMessage, agentMessage, tempId } = action.payload;
+
+        // Resolve optimistic user message
+        const optimisticIdx = state.messages.findIndex(
+          (m) =>
+            m.id === tempId ||
+            m.id === userMessage?.id ||
+            m.metadata?.optimisticId === tempId ||
+            m.metadata?.tempId === tempId,
+        );
+
+        if (optimisticIdx !== -1 && userMessage) {
+          state.messages[optimisticIdx] = {
+            ...state.messages[optimisticIdx],
+            ...userMessage,
+            metadata: {
+              ...state.messages[optimisticIdx].metadata,
+              ...userMessage.metadata,
+              status: "success",
+            },
+          };
+        } else if (userMessage) {
+          state.messages.push(userMessage);
         }
 
-        if (action.payload.agentMessage) {
-          state.messages.push(action.payload.agentMessage);
+        if (agentMessage) {
+          state.messages.push(agentMessage);
         }
 
-        // Sort messages by server timestamp to handle race conditions
-        state.messages = sortMessagesByTimestamp(state.messages);
+        // Re-sort all messages chronologically based on serverTimestamp
+        state.messages = sortMessagesChronologically(state.messages);
 
         // Save chat history after each message
         if (state.currentConversation) {
@@ -729,6 +864,23 @@ const chatSlice = createSlice({
         state.isTyping = false;
         state.error = action.payload as string;
 
+const tempId = typeof action.meta.arg === 'object' && action.meta.arg.tempId
+          ? action.meta.arg.tempId
+          : `msg_optimistic_${action.meta.requestId}`;
+
+        // Find the optimistic message and mark it as failed
+        const optimisticIdx = state.messages.findIndex(
+          m => m.id === tempId || m.metadata?.optimisticId === tempId || m.metadata?.tempId === tempId
+        );
+
+        if (optimisticIdx !== -1) {
+          state.messages[optimisticIdx].metadata = {
+            ...state.messages[optimisticIdx].metadata,
+            status: 'failed',
+            error: String(action.payload),
+          };
+        }
+
         // Add error message with friendly content
         const errorContent =
           action.payload instanceof Error
@@ -737,27 +889,31 @@ const chatSlice = createSlice({
 
         // Convert technical error messages to user-friendly ones
         let friendlyMessage = errorContent;
-        if (errorContent.includes("invalid query")) {
-          friendlyMessage =
-            "I didn't understand that. Could you please rephrase your question?";
-        } else if (errorContent.includes("Failed to send message")) {
-          friendlyMessage =
-            "I'm having trouble processing your request. Please try again.";
-        } else if (errorContent.includes("User not authenticated")) {
+        if (errorContent.toLowerCase().includes('network') || errorContent.toLowerCase().includes('connection')) {
+          friendlyMessage = "I'm having trouble connecting. Please check your internet connection and try again.";
+        } else if (errorContent.includes('invalid query')) {
+          friendlyMessage = "I didn't understand that. Could you please rephrase your question?";
+        } else if (errorContent.includes('Failed to send message')) {
+          friendlyMessage = "I'm having trouble processing your request. Please try again.";
+        } else if (errorContent.includes('User not authenticated')) {
           friendlyMessage = "Please log in to continue the conversation.";
         }
 
         const errorMessage: ChatMessage = {
-          id: Date.now().toString(),
+id: `msg_err_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           type: "agent",
           content: friendlyMessage,
           timestamp: new Date().toISOString(),
+          serverTimestamp: Date.now(),
           metadata: {
             success: false,
-            type: "error",
+type: "error",
+            status: "failed",
+            error: errorContent,
           },
         };
         state.messages.push(errorMessage);
+        state.messages = sortMessagesChronologically(state.messages);
       })
 
       // ── sendVoiceMessage ───────────────────────────────────────────────────
