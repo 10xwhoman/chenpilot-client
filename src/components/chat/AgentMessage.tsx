@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { logger } from "../../utils/logger";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChatMessage } from "@/types";
@@ -19,8 +20,8 @@ export default function AgentMessage({ message, onCopy }: AgentMessageProps) {
   // Handle both string and object content
   const renderContent = () => {
     // Debug logging to see what content we're receiving
-    console.log("[AgentMessage] Message content:", message.content);
-    console.log("[AgentMessage] Content type:", typeof message.content);
+    logger.debug("[AgentMessage] Message content:", message.content);
+    logger.debug("[AgentMessage] Content type:", typeof message.content);
 
     if (typeof message.content === "string") {
       return message.content;
@@ -28,7 +29,7 @@ export default function AgentMessage({ message, onCopy }: AgentMessageProps) {
 
     if (typeof message.content === "object" && message.content !== null) {
       const content = message.content as any;
-      console.log("[AgentMessage] Object content keys:", Object.keys(content));
+      logger.debug("[AgentMessage] Object content keys:", Object.keys(content));
 
       // Handle the new backend response format with vaults array
       if (content.vaults && Array.isArray(content.vaults)) {
