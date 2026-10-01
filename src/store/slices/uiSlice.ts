@@ -1,63 +1,63 @@
-import { createSlice, PayloadAction, createAction } from '@reduxjs/toolkit';
+import { createSlice, PayloadAction, createAction } from "@reduxjs/toolkit";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ThemeState {
-  mode: 'light' | 'dark';
+  mode: "light" | "dark";
+  language: "en" | "ar" | "es" | "fr";
 }
 
-/**
- * Describes the current state of an in-progress automatic retry sequence.
- * `null` when no retry is active.
- */
-export interface RetryStatus {
-  /** Human-readable label for what is being retried (e.g. "Sending message") */
-  label: string;
-  /** 1-based index of the attempt that is currently in-flight */
-  attempt: number;
-  /** Total number of attempts that will be made before giving up */
-  maxAttempts: number;
-  /** Epoch ms at which the next retry will fire (used to drive a countdown) */
-  nextRetryAt: number;
-}
-
-export interface UIState extends ThemeState {
-  retryStatus: RetryStatus | null;
-}
-
-// ─── Initial state ────────────────────────────────────────────────────────────
-
-const initialState: UIState = {
-  mode: 'dark',
-  retryStatus: null,
+const initialState: ThemeState = {
+  mode: "dark", // Default to dark mode
+  language: "en", // Default to English
 };
 
-// ─── Standalone init action ───────────────────────────────────────────────────
-
-export const initializeUI = createAction('ui/initialize', () => {
+// Create action for initialization
+export const initializeUI = createAction("ui/initialize", () => {
+  // Get theme and language from localStorage or use defaults
   const savedTheme =
-    typeof window !== 'undefined'
-      ? (localStorage.getItem('theme') as 'light' | 'dark' | null)
+    typeof window !== "undefined"
+      ? (localStorage.getItem("theme") as "light" | "dark" | null)
       : null;
-  return { payload: savedTheme || 'dark' };
+
+  const savedLanguage =
+    typeof window !== "undefined"
+      ? (localStorage.getItem("language") as "en" | "ar" | "es" | "fr" | null)
+      : null;
+
+  return {
+    payload: {
+      theme: savedTheme || "dark",
+      language: savedLanguage || "en",
+    },
+  };
 });
 
 // ─── Slice ────────────────────────────────────────────────────────────────────
 
 export const uiSlice = createSlice({
-  name: 'ui',
+  name: "ui",
   initialState,
   reducers: {
     toggleTheme: (state) => {
-      state.mode = state.mode === 'light' ? 'dark' : 'light';
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('theme', state.mode);
+      state.mode = state.mode === "light" ? "dark" : "light";
+      // Save to localStorage
+      if (typeof window !== "undefined") {
+        localStorage.setItem("theme", state.mode);
       }
     },
-    setTheme: (state, action: PayloadAction<'light' | 'dark'>) => {
+    setTheme: (state, action: PayloadAction<"light" | "dark">) => {
       state.mode = action.payload;
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('theme', state.mode);
+      // Save to localStorage
+      if (typeof window !== "undefined") {
+        localStorage.setItem("theme", state.mode);
+      }
+    },
+    setLanguage: (state, action: PayloadAction<"en" | "ar" | "es" | "fr">) => {
+      state.language = action.payload;
+      // Save to localStorage
+      if (typeof window !== "undefined") {
+        localStorage.setItem("language", state.language);
       }
     },
     /**
@@ -77,7 +77,8 @@ export const uiSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder.addCase(initializeUI, (state, action) => {
-      state.mode = action.payload;
+      state.mode = action.payload.theme;
+      state.language = action.payload.language;
     });
   },
 });
