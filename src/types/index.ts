@@ -87,9 +87,12 @@ export interface Contact {
   id: string;
   name: string;
   address: string;
-  tokenType: "XLM" | "USDC" | "USDT" | "BTC" | "ETH";
+  tokenType: "XLM" | "USDC" | "USDT" | "BTC" | "ETH" | "AQUA";
   createdAt: string;
   updatedAt: string;
+  avatar?: string;
+  isFavorite?: boolean;
+  lastUsed?: string;
 }
 
 export interface CreateContactRequest {
@@ -186,12 +189,37 @@ export interface ExecutionStep {
 }
 
 // Chat and Message Types
+
+/** Discriminates between plain text and voice messages */
+export type MessageType = "text" | "voice";
+
 export interface ChatMessage {
   id: string;
   type: "user" | "agent" | "system";
+  /** 'text' (default) or 'voice' */
+  messageType?: MessageType;
   content: string;
   timestamp: string;
   serverTimestamp?: number | string;
+  /** ID of the message this is a reply to (undefined for root messages) */
+  parentId?: string;
+  /** Root message ID of the thread this message belongs to */
+  threadId?: string;
+  /** Number of direct replies to this message (only tracked on root messages) */
+  replyCount?: number;
+  /** Voice message fields — only present when messageType === 'voice' */
+  voice?: {
+    /** Base64 data URL (e.g. "data:audio/webm;base64,...") stored for offline playback */
+    audioUrl: string;
+    /** Recording duration in seconds */
+    duration: number;
+    /** MIME type of the recorded audio (e.g. "audio/webm;codecs=opus") */
+    mimeType: string;
+    /** Auto-generated transcript via Web Speech API (may be empty string) */
+    transcript: string;
+    /** Approximate size of the audio data in bytes (before base64 encoding) */
+    sizeBytes: number;
+  };
   metadata?: {
     transactionHash?: string;
     amount?: string;
@@ -210,6 +238,16 @@ export interface ChatMessage {
     optimisticId?: string;
     tempId?: string;
   };
+}
+
+/** Represents an open thread panel for a given root message */
+export interface ThreadState {
+  /** ID of the root message whose thread is open */
+  rootMessageId: string;
+  /** Flat list of reply messages in the thread */
+  replies: ChatMessage[];
+  /** Whether the thread panel is typing an agent response */
+  isTyping: boolean;
 }
 
 export interface Conversation {
@@ -543,4 +581,90 @@ export interface AuditLogStats {
   errorsToday: number;
   warningsToday: number;
   recentActivity: AuditLogEntry[];
+}
+
+// Send Payment Types
+export interface SendPaymentRequest {
+  recipientAddress: string;
+  amount: string;
+  tokenType: 'XLM' | 'USDC' | 'USDT' | 'BTC' | 'ETH' | 'AQUA';
+  memo?: string;
+  memoType?: 'none' | 'text' | 'id' | 'hash';
+  recipientContactId?: string; // Optional reference to selected contact
+}
+
+export interface SendPaymentValidationResult {
+  isValid: boolean;
+  errors: string[];
+  data?: SendPaymentRequest;
+}
+
+// Contact Selection Types
+export interface ContactSelection {
+  id: string;
+  name: string;
+  address: string;
+  tokenType: 'XLM' | 'USDC' | 'USDT' | 'BTC' | 'ETH' | 'AQUA';
+  avatar?: string;
+  isFavorite?: boolean;
+  lastUsed?: string;
+}
+
+export interface ContactPickerState {
+  isOpen: boolean;
+  selectedContact: ContactSelection | null;
+  searchTerm: string;
+  filteredContacts: ContactSelection[];
+}
+
+export interface ContactPickerProps {
+  contacts: Contact[];
+  onSelect: (contact: ContactSelection) => void;
+  onClose: () => void;
+  isOpen: boolean;
+  isLoading?: boolean;
+  tokenType?: 'XLM' | 'USDC' | 'USDT' | 'BTC' | 'ETH' | 'AQUA';
+}
+
+export interface PaymentLimits {
+  minAmount: number;
+  maxAmount: number;
+  maxMemoLength: number;
+  supportedTokens: TokenType[];
+}
+
+export interface PaymentFeeEstimate {
+  baseFee: string;
+  estimatedTotal: string;
+  tokenType: string;
+}
+
+// Account Deployment Types
+export type DeploymentStep = 'auth' | 'funding' | 'deployment' | 'verification' | 'complete';
+
+export type DeploymentStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+export interface DeploymentStepInfo {
+  id: DeploymentStep;
+  title: string;
+  description: string;
+  status: DeploymentStepStatus;
+  timestamp?: string;
+  transactionHash?: string;
+  error?: string;
+}
+
+export interface DeploymentProgress {
+  currentStep: DeploymentStep;
+  steps: DeploymentStepInfo[];
+  isComplete: boolean;
+  hasError: boolean;
+  startTime?: string;
+  endTime?: string;
+}
+
+export interface DeploymentConfig {
+  network: 'testnet' | 'mainnet';
+  fundingAmount: string;
+  autoDeploy: boolean;
 }

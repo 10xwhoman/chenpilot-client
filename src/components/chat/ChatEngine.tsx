@@ -31,8 +31,10 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { ChatMessage } from "@/types";
+import { usePathname, useRouter } from "next/navigation";
 
-// Speech Recognition types
+// ─── Speech Recognition ambient types (used by the old transcription path) ────
+
 interface SpeechRecognition extends EventTarget {
   continuous: boolean;
   interimResults: boolean;
@@ -45,35 +47,29 @@ interface SpeechRecognition extends EventTarget {
   onend: () => void;
   onstart: () => void;
 }
-
 interface SpeechRecognitionEvent extends Event {
   resultIndex: number;
   results: SpeechRecognitionResultList;
 }
-
 interface SpeechRecognitionErrorEvent extends Event {
   error: string;
   message: string;
 }
-
 interface SpeechRecognitionResultList {
   length: number;
   item(index: number): SpeechRecognitionResult;
   [index: number]: SpeechRecognitionResult;
 }
-
 interface SpeechRecognitionResult {
   length: number;
   item(index: number): SpeechRecognitionAlternative;
   [index: number]: SpeechRecognitionAlternative;
   isFinal: boolean;
 }
-
 interface SpeechRecognitionAlternative {
   transcript: string;
   confidence: number;
 }
-
 declare global {
   interface Window {
     SpeechRecognition: new () => SpeechRecognition;
@@ -81,7 +77,19 @@ declare global {
   }
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatSeconds(secs: number): string {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export const ChatEngine: React.FC = () => {
+  const router = useRouter();
+  const pathname = usePathname();
   const dispatch = useAppDispatch();
   const { user } = useAppSelector((state) => state.auth);
   const {
@@ -102,12 +110,53 @@ export const ChatEngine: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ── Legacy speech-to-text (transcription → text input) ───────────────────
+  // Kept for the Mic button when MediaRecorder is NOT supported
+  const [isLegacyRecording, setIsLegacyRecording] = useState(false);
+  const [legacyRecordingTime, setLegacyRecordingTime] = useState(0);
+  const legacyTimerRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
+  // ── Voice message recorder (MediaRecorder) ────────────────────────────────
+  const {
+    status: voiceStatus,
+    elapsedSeconds,
+    liveTranscript,
+    recording,
+    isSupported: isVoiceSupported,
+    startRecording,
+    stopRecording,
+    cancelRecording,
+    reset: resetRecorder,
+  } = useVoiceRecorder();
+
+  const isVoiceRecording = voiceStatus === 'recording';
+  const isVoicePreview  = voiceStatus === 'stopped';
+
+  // ── Thread handlers ───────────────────────────────────────────────────────
+  const handleOpenThread = (messageId: string) => {
+    if (activeThread?.rootMessageId === messageId) {
+      dispatch(closeThread());
+    } else {
+      dispatch(openThread(messageId));
+    }
+  };
+
+  const handleCloseThread = () => dispatch(closeThread());
+
+  // Listen for thread replies from other participants
+  useSocketEvent('thread:new_reply', (data: unknown) => {
+    const payload = data as { threadId: string; message: ChatMessage; userId: string };
+    if (payload.userId === user?.id) return;
+    dispatch(addReply(payload.message));
+    toast(`New reply in thread`, { icon: '💬' });
+  });
+
+  // ── Effects ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, isTyping]);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isTyping, voiceStatus]);
 
   useEffect(() => {
     if (currentConversation && messages.length > 0) {
@@ -115,18 +164,21 @@ export const ChatEngine: React.FC = () => {
     }
   }, [dispatch, currentConversation, messages.length]);
 
+  // Cleanup legacy recorder on unmount
+  useEffect(() => {
+    if (currentConversation?.id && pathname === "/chat") {
+      router.replace(`/chat/${encodeURIComponent(currentConversation.id)}`, { scroll: false });
+    }
+  }, [currentConversation?.id, pathname, router]);
+
   useEffect(() => {
     return () => {
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current);
-      }
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
+      if (legacyTimerRef.current) clearInterval(legacyTimerRef.current);
+      try { recognitionRef.current?.stop(); } catch { /* ignore */ }
     };
   }, []);
 
-  // Initialize speech recognition
+  // Initialize legacy SpeechRecognition (used only when MediaRecorder unavailable)
   useEffect(() => {
     if (typeof window !== "undefined") {
       const SpeechRecognition =
@@ -199,7 +251,31 @@ export const ChatEngine: React.FC = () => {
           }
         };
       }
-    }
+      if (finalTranscript) {
+        setInputValue(finalTranscript);
+        recognition.stop();
+      }
+    };
+    recognition.onerror = (event) => {
+      setIsLegacyRecording(false);
+      if (legacyTimerRef.current) clearInterval(legacyTimerRef.current);
+      const msgs: Record<string, string> = {
+        'no-speech': 'No speech detected.',
+        'audio-capture': 'No microphone found.',
+        'not-allowed': 'Microphone access denied.',
+        'network': 'Network error.',
+      };
+      toast.error('Speech recognition failed. ' + (msgs[event.error] ?? 'Please try again.'));
+    };
+    recognition.onend = () => {
+      setIsLegacyRecording(false);
+      if (legacyTimerRef.current) {
+        clearInterval(legacyTimerRef.current);
+        setLegacyRecordingTime(0);
+      }
+    };
+
+    recognitionRef.current = recognition;
   }, []);
 
   const scrollToBottom = () => {
@@ -208,8 +284,7 @@ export const ChatEngine: React.FC = () => {
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputValue.trim()) return;
-
+    if (!inputValue.trim() || isChatLoading || isTyping) return;
     const message = inputValue.trim();
     setInputValue("");
 
@@ -257,8 +332,9 @@ export const ChatEngine: React.FC = () => {
     toast.success("Message updated");
   };
 
-  const toggleVoiceRecording = () => {
-    if (isRecording) {
+  // Legacy: toggle speech-to-text (fallback when MediaRecorder not supported)
+  const toggleLegacyRecording = () => {
+    if (isLegacyRecording) {
       recognitionRef.current?.stop();
       setIsRecording(false);
       if (recordingIntervalRef.current)
@@ -303,10 +379,68 @@ export const ChatEngine: React.FC = () => {
     },
   ];
 
-  const handleToolSelect = (toolName: string) => {
-    setSelectedTool(selectedTool === toolName ? null : toolName);
+  // ── Recording overlay (shown inside the input box while recording) ─────────
+  const renderRecordingOverlay = () => {
+    if (!isVoiceRecording) return null;
+    const pct = Math.min(elapsedSeconds / VOICE_MESSAGE.MAX_DURATION_SECONDS, 1);
+    return (
+      <div className="flex items-center gap-3 mb-4">
+        {/* Animated pulse dot */}
+        <span className="relative flex h-3 w-3 shrink-0">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500" />
+        </span>
+
+        {/* Live transcript preview */}
+        <span className="flex-1 text-sm text-gray-300 truncate min-w-0">
+          {liveTranscript || (
+            <span className="text-gray-500 italic">Listening…</span>
+          )}
+        </span>
+
+        {/* Elapsed / max */}
+        <span className="text-xs text-red-400 font-mono shrink-0">
+          {formatSeconds(elapsedSeconds)} / {formatSeconds(VOICE_MESSAGE.MAX_DURATION_SECONDS)}
+        </span>
+
+        {/* Progress bar */}
+        <div className="w-20 h-1 rounded-full bg-gray-700 shrink-0 overflow-hidden">
+          <div
+            className="h-full bg-red-400 rounded-full transition-all duration-1000"
+            style={{ width: `${pct * 100}%` }}
+          />
+        </div>
+      </div>
+    );
   };
 
+  // ── Pre-send preview strip ─────────────────────────────────────────────────
+  const renderVoicePreview = () => {
+    if (!isVoicePreview || !recording) return null;
+    return (
+      <div className="mb-4 flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <VoiceMessagePlayer
+            audioUrl={recording.audioUrl}
+            duration={recording.duration}
+            transcript={recording.transcript}
+            variant="user"
+          />
+        </div>
+        {/* Cancel preview */}
+        <button
+          onClick={resetRecorder}
+          className="shrink-0 p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          title="Discard voice message"
+          aria-label="Discard voice message"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    );
+  };
+
+  // ── Input area ────────────────────────────────────────────────────────────
   const renderInput = (isSticky: boolean = false) => (
     <div
       className={`w-full ${isSticky ? "max-w-4xl mx-auto px-4 py-6" : "max-w-3xl mb-8"}`}
@@ -347,6 +481,7 @@ export const ChatEngine: React.FC = () => {
         )}
 
         <div className="flex items-center justify-between">
+          {/* Tools picker */}
           <div className="flex items-center space-x-3">
             <button
               type="button"
@@ -389,7 +524,68 @@ onClick={() =>
             ) : (
               <Mic className="h-6 w-6" />
             )}
-          </button>
+
+            {/* Send voice message button (preview state) */}
+            {isVoicePreview && (
+              <button
+                type="button"
+                onClick={handleSendVoiceMessage}
+                disabled={isChatLoading}
+                className="p-3 rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition-colors"
+                title="Send voice message"
+                aria-label="Send voice message"
+              >
+                <SendHorizonal className="h-6 w-6" />
+              </button>
+            )}
+
+            {/* Main mic / stop / send button */}
+            {!isVoicePreview && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (inputValue.trim() && !isVoiceRecording) {
+                    handleSendMessage();
+                  } else if (isVoiceSupported) {
+                    handleVoiceMicClick();
+                  } else {
+                    toggleLegacyRecording();
+                  }
+                }}
+                disabled={isChatLoading || isTyping}
+                className={cn(
+                  'p-3 rounded-lg transition-colors',
+                  isVoiceRecording || isLegacyRecording
+                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                    : inputValue.trim()
+                    ? 'bg-purple-600 text-white hover:bg-purple-700'
+                    : 'text-gray-400 hover:bg-gray-800/50 hover:text-white',
+                )}
+                title={
+                  isVoiceRecording || isLegacyRecording
+                    ? 'Stop recording'
+                    : inputValue.trim()
+                    ? 'Send message'
+                    : 'Record voice message'
+                }
+                aria-label={
+                  isVoiceRecording || isLegacyRecording
+                    ? 'Stop recording'
+                    : inputValue.trim()
+                    ? 'Send message'
+                    : 'Record voice message'
+                }
+              >
+                {isVoiceRecording || isLegacyRecording ? (
+                  <Square className="h-6 w-6" />
+                ) : inputValue.trim() ? (
+                  <Send className="h-6 w-6" />
+                ) : (
+                  <Mic className="h-6 w-6" />
+                )}
+              </button>
+            )}
+          </div>
         </div>
 
         {showTools && (
@@ -436,6 +632,7 @@ onClick={() =>
     </div>
   );
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="h-full flex flex-col bg-[#0F0F23] text-white overflow-hidden relative">
       <OfflineIndicator />
@@ -517,9 +714,15 @@ onClick={() =>
                     </span>
                   </div>
                 </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </div>
+
+        {messages.length > 0 && (
+          <div className="relative z-10 border-t border-gray-800/50 bg-[#0F0F23]/80 backdrop-blur-xl">
+            {renderInput(true)}
           </div>
         )}
       </div>

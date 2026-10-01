@@ -1,7 +1,17 @@
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
+import { logger } from "../../utils/logger";
 import { ChatMessage, AgentQueryRequest, Conversation } from "@/types";
 import { AgentQueryResponse } from "@/types/agent";
 import apiService from "@/services/api";
+
+// ─── Voice message payload ────────────────────────────────────────────────────
+export interface SendVoiceMessagePayload {
+  audioUrl: string;
+  duration: number;
+  mimeType: string;
+  transcript: string;
+  sizeBytes: number;
+}
 
 interface ChatState {
   messages: ChatMessage[];
@@ -183,11 +193,11 @@ export const sendMessage = createAsyncThunk(
           if (parsed && typeof parsed === "object") {
             // If it has a specific 'message' or 'text' field, we might use that for display
             // but for now we keep the whole object as metadata or stringify it for content
-            console.log("[ChatSlice] Structured agent response:", parsed);
+            logger.debug("[ChatSlice] Structured agent response:", parsed);
           }
         } catch (e) {
           // Not valid JSON or parsing failed, keep as string
-          console.log(
+          logger.debug(
             "[ChatSlice] Response is not valid JSON, keeping as string",
           );
         }
@@ -248,6 +258,97 @@ serverTimestamp: serverTimestamp,
     }
   },
 );
+
+// ─── sendVoiceMessage thunk ───────────────────────────────────────────────────
+
+export const sendVoiceMessage = createAsyncThunk(
+  'chat/sendVoiceMessage',
+  async (payload: SendVoiceMessagePayload, { getState, rejectWithValue }) => {
+    const state = getState() as any;
+
+    if (state.chat.isLoading || state.chat.isTyping) {
+      return rejectWithValue('A message is already in progress');
+    }
+
+    const userId = state.auth.user?.id;
+    if (!userId) {
+      return rejectWithValue('User not authenticated');
+    }
+
+    // Storage guard — warn if total voice data in history is getting large
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('chat_history') || '';
+      if (stored.length > VOICE_MESSAGE.STORAGE_WARN_BYTES) {
+        console.warn('[sendVoiceMessage] chat_history localStorage is large; consider pruning old voice messages');
+      }
+    }
+
+    let conversation = state.chat.currentConversation;
+    if (!conversation) {
+      conversation = {
+        id: `conv_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        title: 'New Chat',
+        description: 'A new conversation',
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        userId,
+        messageCount: 0,
+      };
+    }
+
+    // Display text is the transcript (or a placeholder)
+    const displayText = payload.transcript
+      ? `🎙 *Voice message* — "${payload.transcript}"`
+      : '🎙 *Voice message*';
+
+    const voiceMessage: ChatMessage = {
+      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      type: 'user',
+      messageType: 'voice',
+      content: displayText,
+      timestamp: new Date().toISOString(),
+      voice: {
+        audioUrl: payload.audioUrl,
+        duration: payload.duration,
+        mimeType: payload.mimeType,
+        transcript: payload.transcript,
+        sizeBytes: payload.sizeBytes,
+      },
+    };
+
+    // If there is a transcript, forward it to the agent as a regular text query
+    let agentMessage: ChatMessage | null = null;
+    if (payload.transcript.trim()) {
+      try {
+        const response = await apiService.queryAgent({ userId, query: payload.transcript });
+        let content = response.result.data;
+        try {
+          const parsed = JSON.parse(content);
+          if (parsed && typeof parsed === 'object') content = parsed;
+        } catch { /* not JSON */ }
+
+        agentMessage = {
+          id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'agent',
+          content,
+          timestamp: new Date().toISOString(),
+          metadata: {
+            success: response.result.success,
+            error: response.result.error,
+            executionTrace: response.result.executionTrace,
+          },
+        };
+      } catch {
+        // Non-fatal — voice message is still stored even if agent call fails
+      }
+    }
+
+    return { conversation, voiceMessage, agentMessage };
+  },
+);
+
+// ─── Slice ────────────────────────────────────────────────────────────────────
 
 const chatSlice = createSlice({
   name: "chat",
@@ -352,11 +453,10 @@ state.messages[index] = {
     },
     loadChatHistory: (state, action: PayloadAction<string>) => {
       const conversationId = action.payload;
-      if (state.chatHistory[conversationId]) {
-        state.messages = sortMessagesChronologically(state.chatHistory[conversationId]);
-      } else {
-        state.messages = [];
-      }
+      const conversation = state.conversations.find((item) => item.id === conversationId);
+      state.currentConversation = conversation ?? state.currentConversation;
+      const loadedMessages = state.chatHistory[conversationId] ?? conversation?.messages ?? [];
+      state.messages = sortMessagesChronologically(loadedMessages);
     },
     saveChatHistory: (state) => {
       if (state.currentConversation && state.messages.length > 0) {
@@ -392,24 +492,39 @@ state.messages[index] = {
       }
     },
     saveConversationLocally: (state, action: PayloadAction<Conversation>) => {
-      const conversation = action.payload;
-      state.conversations.unshift(conversation);
+      const conversation = {
+        ...action.payload,
+        messages: [...state.messages],
+        messageCount: state.messages.length,
+      };
+      state.chatHistory[conversation.id] = [...state.messages];
+      const existingIndex = state.conversations.findIndex((item) => item.id === conversation.id);
+      if (existingIndex >= 0) {
+        state.conversations[existingIndex] = conversation;
+      } else {
+        state.conversations.unshift(conversation);
+      }
 
       // Save to localStorage
       if (typeof window !== "undefined") {
         const conversations = JSON.parse(
           localStorage.getItem("conversations") || "[]",
         );
-        conversations.unshift(conversation);
+        const existingIndex = conversations.findIndex((item: Conversation) => item.id === conversation.id);
+        if (existingIndex >= 0) conversations[existingIndex] = conversation;
+        else conversations.unshift(conversation);
         localStorage.setItem("conversations", JSON.stringify(conversations));
+        localStorage.setItem("chat_history", JSON.stringify(state.chatHistory));
       }
     },
     loadConversationsLocally: (state) => {
       if (typeof window !== "undefined") {
-        const conversations = JSON.parse(
-          localStorage.getItem("conversations") || "[]",
-        );
-        state.conversations = conversations;
+        try {
+          const conversations = JSON.parse(localStorage.getItem("conversations") || "[]");
+          state.conversations = Array.isArray(conversations) ? conversations : [];
+        } catch {
+          state.conversations = [];
+        }
       }
     },
     deleteConversationLocally: (state, action: PayloadAction<string>) => {
@@ -620,12 +735,12 @@ state.messages[index] = {
         state.currentConversation = action.payload.conversation;
 
         // Debug logging to see what the server is returning
-console.log("[ChatSlice] Full response:", action.payload.response);
-        console.log(
+        logger.debug("[ChatSlice] Full response:", action.payload.response);
+        logger.debug(
           "[ChatSlice] Response result:",
           action.payload.response.result,
         );
-        console.log(
+        logger.debug(
           "[ChatSlice] Response data:",
           action.payload.response.result.data,
         );
@@ -636,18 +751,18 @@ console.log("[ChatSlice] Full response:", action.payload.response);
         // If the response data is an object with structured data, use it directly
         if (typeof content === "object" && content !== null) {
           // The content is already structured, use it as is
-          console.log("[ChatSlice] Using structured content:", content);
+          logger.debug("[ChatSlice] Using structured content:", content);
         } else if (typeof content === "string") {
           // Try to parse if it's a JSON string
           try {
             const parsed = JSON.parse(content);
             if (typeof parsed === "object" && parsed !== null) {
               content = parsed;
-              console.log("[ChatSlice] Parsed JSON content:", content);
+              logger.debug("[ChatSlice] Parsed JSON content:", content);
             }
           } catch (e) {
             // Not JSON, use as string
-            console.log("[ChatSlice] Using string content:", content);
+            logger.debug("[ChatSlice] Using string content:", content);
           }
         }
 
@@ -751,6 +866,35 @@ type: "error",
         };
         state.messages.push(errorMessage);
         state.messages = sortMessagesChronologically(state.messages);
+      })
+
+      // ── sendVoiceMessage ───────────────────────────────────────────────────
+      .addCase(sendVoiceMessage.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(sendVoiceMessage.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.currentConversation = action.payload.conversation;
+
+        state.messages.push(action.payload.voiceMessage);
+
+        if (action.payload.agentMessage) {
+          state.messages.push(action.payload.agentMessage);
+        }
+
+        if (state.currentConversation) {
+          state.chatHistory[state.currentConversation.id] = [...state.messages];
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('chat_history', JSON.stringify(state.chatHistory));
+          }
+        }
+
+        state.error = null;
+      })
+      .addCase(sendVoiceMessage.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
       });
   },
 });

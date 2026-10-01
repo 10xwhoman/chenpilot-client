@@ -12,6 +12,7 @@ import {
   deleteChatHistory,
   loadConversationsLocally,
   deleteConversationLocally,
+  setCurrentConversation,
 } from "@/store/slices/chatSlice";
 import { ConversationManager } from "@/components/chat/ConversationManager";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -19,7 +20,6 @@ import { Button } from "@/components/ui/Button";
 import toast from "react-hot-toast";
 import { X, Menu, PanelLeft, Plus } from "lucide-react";
 import { cn } from "@/utils/cn";
-import Image from "next/image";
 import Image from "next/image";
 
 interface ChatLayoutProps {
@@ -37,7 +37,7 @@ export function ChatLayout({ children }: ChatLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Get chat history from Redux store
-  const { chatHistory, currentConversation } = useAppSelector(
+  const { chatHistory, currentConversation, conversations } = useAppSelector(
     (state) => state.chat,
   );
 
@@ -94,9 +94,10 @@ export function ChatLayout({ children }: ChatLayoutProps) {
   };
 
   const handleLoadChat = (conversationId: string) => {
-    // Load chat history for the selected conversation
+    const conversation = conversations.find((item) => item.id === conversationId);
     dispatch(loadChatHistory(conversationId));
-    router.push("/chat");
+    if (conversation) dispatch(setCurrentConversation(conversation));
+    router.push(`/chat/${encodeURIComponent(conversationId)}`);
     setSidebarOpen(false);
   };
 
@@ -242,7 +243,8 @@ export function ChatLayout({ children }: ChatLayoutProps) {
               <ConversationManager
                 onSelectConversation={(conv) => {
                   dispatch(loadChatHistory(conv.id));
-                  router.push("/chat");
+                  dispatch(setCurrentConversation(conv));
+                  router.push(`/chat/${encodeURIComponent(conv.id)}`);
                   setSidebarOpen(false);
                 }}
               />
