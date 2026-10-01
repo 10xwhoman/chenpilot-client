@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# tsc output logs (#135)
+tsc_output.txt
+*.tsc_output.txt
