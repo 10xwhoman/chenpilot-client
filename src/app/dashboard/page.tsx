@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAppDispatch, useAppSelector } from '@/store';
 import { getAccountStatus, getBalance, getStellarNetworkStatus, getAccountTransactions } from '@/store/slices/accountSlice';
@@ -197,6 +198,12 @@ export default function DashboardPage() {
             <Button className="mt-4" onClick={() => setReceiveModalOpen(true)}>
               Receive payment
             </Button>
+            <Link
+              href="/dashboard/versions"
+              className="ml-3 mt-4 inline-flex rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-100 hover:border-sky-400 hover:text-sky-200"
+            >
+              Manage prompt versions
+            </Link>
           </div>
 
           <BalanceCard
