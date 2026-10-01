@@ -1,13 +1,18 @@
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useDispatch, useSelector } from "react-redux";
 import { RootState, AppDispatch } from "@/store";
 import { getTransactionHistory } from "@/store/slices/accountSlice";
 import { Card } from "@/components/ui/Card";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Button } from "@/components/ui/Button";
 import { formatDate, formatTokenAmount } from "@/utils/format";
+import { RefreshCw, ReceiptText } from "lucide-react";
 
 export default function TransactionsPage() {
+  const router = useRouter();
   const dispatch = useDispatch<AppDispatch>();
   const { status, transactions } = useSelector(
     (state: RootState) => state.account,
@@ -49,7 +54,21 @@ export default function TransactionsPage() {
     return (
       <div className="container mx-auto px-4 py-8">
         <h1 className="text-2xl font-bold mb-6">Transaction History</h1>
-        <div className="text-red-600">Error: {transactions.error}</div>
+        <Card className="border-red-200 dark:border-red-900">
+          <div role="alert" className="space-y-4">
+            <p className="text-red-700 dark:text-red-300">Error: {transactions.error}</p>
+            {status?.publicKey && (
+              <Button
+                type="button"
+                onClick={() => dispatch(getTransactionHistory(status.publicKey))}
+                className="inline-flex items-center gap-2"
+              >
+                <RefreshCw aria-hidden="true" className="h-4 w-4" />
+                Retry
+              </Button>
+            )}
+          </div>
+        </Card>
       </div>
     );
   }
@@ -59,11 +78,12 @@ export default function TransactionsPage() {
       <h1 className="text-2xl font-bold mb-6">Transaction History</h1>
 
       {transactions.transactions.length === 0 ? (
-        <Card>
-          <p className="text-gray-500 text-center py-8">
-            No transactions found.
-          </p>
-        </Card>
+        <EmptyState
+          icon={<ReceiptText aria-hidden="true" className="h-8 w-8" />}
+          title="No transactions yet"
+          description="Your completed transactions will appear here. Start with a wallet transfer or payment."
+          action={{ label: "Go to dashboard", onClick: () => router.push("/dashboard") }}
+        />
       ) : (
         <div className="space-y-4">
           {transactions.transactions.map((tx) => (
