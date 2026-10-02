@@ -8,7 +8,7 @@
  * @returns Formatted address string
  */
 export function formatAddress(address: string, startChars: number = 6, endChars: number = 4): string {
-  if (!address || address.length < startChars + endChars) {
+  if (!address || address.length <= startChars + endChars) {
     return address;
   }
   return `${address.slice(0, startChars)}...${address.slice(-endChars)}`;
@@ -182,5 +182,5 @@ export function truncateText(text: string, maxLength: number, suffix: string = '
   if (text.length <= maxLength) {
     return text;
   }
-  return text.slice(0, maxLength - suffix.length) + suffix;
+  return text.slice(0, Math.max(0, maxLength - suffix.length)).trimEnd() + suffix;
 }

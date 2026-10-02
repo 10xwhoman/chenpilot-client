@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import toast from 'react-hot-toast';
 import { useSocket } from '@/hooks/useSocket';
+import { transactionToastId } from '@/utils/transactionToast';
 
 interface TransactionEvent {
   hash?: string;
@@ -22,7 +23,7 @@ export function TransactionToastListener() {
         ?? (event.amount && event.asset
           ? `Transaction complete: ${event.amount} ${event.asset}`
           : 'Transaction completed successfully');
-      toast.success(label, { duration: 5000 });
+      toast.success(label, { duration: 5000, id: transactionToastId(label) });
     };
 
     socket.on('transaction:completed', handleTransaction);

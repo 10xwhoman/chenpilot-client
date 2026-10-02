@@ -1,0 +1,128 @@
+export const translations = {
+  en: {
+    common: {
+      language: 'Language',
+      english: 'English',
+      arabic: 'العربية',
+      spanish: 'Español',
+      french: 'Français',
+    },
+    nav: {
+      dashboard: 'Dashboard',
+      chat: 'Chat',
+      history: 'History',
+      contacts: 'Contacts',
+      transactions: 'Transactions',
+      settings: 'Settings',
+    },
+    settings: {
+      title: 'Settings',
+      description: 'Manage your account preferences and application settings.',
+      profile: 'Profile',
+      appearance: 'Appearance',
+      language: 'Language',
+      notifications: 'Notifications',
+      security: 'Security',
+      theme: 'Theme',
+      light: 'Light',
+      dark: 'Dark',
+    },
+  },
+  ar: {
+    common: {
+      language: 'اللغة',
+      english: 'English',
+      arabic: 'العربية',
+      spanish: 'Español',
+      french: 'Français',
+    },
+    nav: {
+      dashboard: 'لوحة التحكم',
+      chat: 'الدردشة',
+      history: 'السجل',
+      contacts: 'جهات الاتصال',
+      transactions: 'المعاملات',
+      settings: 'الإعدادات',
+    },
+    settings: {
+      title: 'الإعدادات',
+      description: 'إدارة تفضيلات حسابك وإعدادات التطبيق.',
+      profile: 'الملف الشخصي',
+      appearance: 'المظهر',
+      language: 'اللغة',
+      notifications: 'الإشعارات',
+      security: 'الأمان',
+      theme: 'المظهر',
+      light: 'فاتح',
+      dark: 'داكن',
+    },
+  },
+  es: {
+    common: {
+      language: 'Idioma',
+      english: 'English',
+      arabic: 'العربية',
+      spanish: 'Español',
+      french: 'Français',
+    },
+    nav: {
+      dashboard: 'Panel de control',
+      chat: 'Chat',
+      history: 'Historial',
+      contacts: 'Contactos',
+      transactions: 'Transacciones',
+      settings: 'Configuración',
+    },
+    settings: {
+      title: 'Configuración',
+      description: 'Administra las preferencias de tu cuenta y la configuración de la aplicación.',
+      profile: 'Perfil',
+      appearance: 'Apariencia',
+      language: 'Idioma',
+      notifications: 'Notificaciones',
+      security: 'Seguridad',
+      theme: 'Tema',
+      light: 'Claro',
+      dark: 'Oscuro',
+    },
+  },
+  fr: {
+    common: {
+      language: 'Langue',
+      english: 'English',
+      arabic: 'العربية',
+      spanish: 'Español',
+      french: 'Français',
+    },
+    nav: {
+      dashboard: 'Tableau de bord',
+      chat: 'Chat',
+      history: 'Historique',
+      contacts: 'Contacts',
+      transactions: 'Transactions',
+      settings: 'Paramètres',
+    },
+    settings: {
+      title: 'Paramètres',
+      description: 'Gérez vos préférences de compte et les paramètres de l\'application.',
+      profile: 'Profil',
+      appearance: 'Apparence',
+      language: 'Langue',
+      notifications: 'Notifications',
+      security: 'Sécurité',
+      theme: 'Thème',
+      light: 'Clair',
+      dark: 'Sombre',
+    },
+  },
+} as const;
+
+export type Language = keyof typeof translations;
+export type TranslationKeys = keyof typeof translations.en;
+
+export const LANGUAGES: { code: Language; name: string; dir: 'ltr' | 'rtl' }[] = [
+  { code: 'en', name: 'English', dir: 'ltr' },
+  { code: 'ar', name: 'العربية', dir: 'rtl' },
+  { code: 'es', name: 'Español', dir: 'ltr' },
+  { code: 'fr', name: 'Français', dir: 'ltr' },
+];

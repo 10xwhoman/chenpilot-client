@@ -7,6 +7,7 @@ import { getContacts, createContact, updateContact, deleteContact } from '@/stor
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Card } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal } from '@/components/ui/Modal';
 import { ChatLayout } from '@/components/layout/ChatLayout';
 import { 
@@ -164,24 +165,16 @@ export default function ContactsPage() {
             <p className="mt-4 text-gray-300">Loading contacts...</p>
           </div>
         ) : filteredContacts.length === 0 ? (
-          <Card className="text-center py-12">
-            <Users className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-white mb-2">
-              {searchTerm ? 'No contacts found' : 'No contacts yet'}
-            </h3>
-            <p className="text-gray-300 mb-6">
-              {searchTerm 
-                ? 'Try adjusting your search terms'
-                : 'Add your first contact to get started'
-              }
-            </p>
-            {!searchTerm && (
-              <Button onClick={() => setIsCreateModalOpen(true)}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add Your First Contact
-              </Button>
-            )}
-          </Card>
+          <EmptyState
+            icon={<Users aria-hidden="true" className="h-8 w-8" />}
+            title={searchTerm ? 'No contacts found' : 'No contacts yet'}
+            description={searchTerm ? 'Try another name or address.' : 'Save a contact to make future transfers easier.'}
+            action={!searchTerm ? {
+              label: 'Add your first contact',
+              onClick: () => setIsCreateModalOpen(true),
+              icon: <Plus aria-hidden="true" className="h-4 w-4" />,
+            } : undefined}
+          />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredContacts.map((contact) => (
